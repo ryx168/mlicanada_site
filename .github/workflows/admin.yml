@@ -153,7 +153,17 @@ jobs:
           docker exec ps sh -c 'a2enmod rewrite >/dev/null 2>&1 || true'
           docker exec ps sh -c "sed -i 's/^Listen 80\$/Listen 8080/' /etc/apache2/ports.conf; sed -i 's/:80>/:8080>/' /etc/apache2/sites-available/*.conf; apache2ctl -k graceful 2>/dev/null || apache2ctl -k restart 2>/dev/null || true"
           sleep 8
-          echo "local check: $(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ || true)"
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ || true)
+          echo "local check: $code"
+          # /var/log/apache2/error.log is EMPTY in this image - php:apache
+          # sends both logs to the container's stdout/stderr. Tailing the file
+          # is why a blanket 500 from a bad .htaccess looked like it had no
+          # cause at all. Read the container log instead.
+          case "$code" in
+            200|301|302) ;;
+            *) echo "===== container log (apache + php) ====="
+               docker logs --tail 60 ps 2>&1 | tail -60 || true ;;
+          esac
 
       # A status code alone proves nothing here: PrestaShop 302s "/" to "/en/"
       # whether or not the shop renders. Check the delivered HTML, through the
@@ -184,8 +194,10 @@ jobs:
           [ "$home" = "200" ] || { echo "::error::shop did not return 200"; fail=1; }
           [ "$adm" = "200" ]  || { echo "::error::admin did not return 200"; fail=1; }
           if [ "$fail" != "0" ]; then
-            echo "===== apache error log ====="
-            docker exec ps sh -c 'tail -40 /var/log/apache2/error.log 2>/dev/null' || true
+            echo "===== container log (apache + php) ====="
+            docker logs --tail 60 ps 2>&1 | tail -60 || true
+            echo "===== .htaccess as the container sees it ====="
+            docker exec ps sh -c 'grep -vE "^\s*#|^\s*$" /var/www/html/.htaccess | head -30' || true
             echo "===== prestashop logs ====="
             docker exec ps sh -c 'tail -30 /var/www/html/var/logs/*.log 2>/dev/null' || true
             echo "===== what the shop actually returned ====="
