@@ -1,0 +1,42 @@
+name: check the Cloudflare token
+
+# Prints which Cloudflare APIs the token can reach. Status codes only - the
+# token itself is never echoed.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe each API the admin workflow needs
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "${TOKEN:-}" ]; then echo "CLOUDFLARE_API_TOKEN is not set"; exit 1; fi
+          echo "account id length: ${#ACCT}"
+          probe () {
+            code=$(curl -s -o /tmp/body -w '%{http_code}' \
+                   -H "Authorization: Bearer $TOKEN" "$2")
+            printf '  %-34s %s\n' "$1" "$code"
+            if [ "$code" != "200" ]; then
+              head -c 300 /tmp/body | tr -d '\n' | sed 's/^/        /'
+              echo
+            fi
+          }
+          B=https://api.cloudflare.com/client/v4
+          echo "=== token itself ==="
+          probe "token verify"        "$B/user/tokens/verify"
+          echo "=== what the admin workflow needs ==="
+          probe "r2 bucket list"      "$B/accounts/$ACCT/r2/buckets?per_page=1"
+          probe "r2 OBJECT read"      "$B/accounts/$ACCT/r2/buckets/mlicanada-admin/objects/overlay.part00"
+          probe "pages projects"      "$B/accounts/$ACCT/pages/projects?per_page=1"
+          probe "d1 databases"        "$B/accounts/$ACCT/d1/database?per_page=1"
+          echo "=== optional, used by wrangler to resolve the account ==="
+          probe "accounts list"       "$B/accounts?per_page=1"
+          echo
+          echo "=== permissions actually on this token ==="
+          curl -s -H "Authorization: Bearer $TOKEN" "$B/user/tokens/verify" \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print('   status:', (d.get('result') or {}).get('status'), '| errors:', d.get('errors'))" || true
