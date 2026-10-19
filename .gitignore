@@ -1,0 +1,15 @@
+overlay/
+export/
+*.tgz
+*.log
+ids.txt
+canon.tsv
+pages.txt
+linked.txt
+todo.txt
+atodo.txt
+assets.txt
+d1.sql
+shop.sql
+deployed-files.txt
+pages-deployed.txt

@@ -1,0 +1,188 @@
+name: mlicanada admin (on demand)
+
+# Boots the real PrestaShop 1.7.7.5 admin in a throwaway runner, hands you a
+# temporary https URL, and rebuilds the static site from that same PrestaShop
+# when you are done - so the expiring server1 is not in the loop.
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: 'How long to keep the admin open (max 300)'
+        required: true
+        default: '120'
+      republish:
+        description: 'Rebuild and deploy the static site when the admin closes'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  admin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    services:
+      mysql:
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: shoproot
+          MYSQL_DATABASE: jinwu_shop
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -pshoproot"
+          --health-interval=10s --health-timeout=5s --health-retries=20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the overlay (theme, modules, product images)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download assets --repo "$GITHUB_REPOSITORY" -p mlicanada_overlay.tgz -D .
+          mkdir -p overlay && tar xzf mlicanada_overlay.tgz -C overlay
+          echo "overlay: $(find overlay -type f | wc -l) files, $(du -sh overlay | cut -f1)"
+
+      - name: Load the catalogue database
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            mysqladmin ping -h 127.0.0.1 -P 3306 -u root -pshoproot --silent && break || sleep 3
+          done
+          gunzip -c db/mlicanada_shop.sql.gz | mysql -h 127.0.0.1 -P 3306 -u root -pshoproot jinwu_shop
+          echo "products loaded: $(mysql -h 127.0.0.1 -u root -pshoproot -N -B -e 'SELECT COUNT(*) FROM ps_product' jinwu_shop)"
+
+      - name: Open the tunnel and take its hostname
+        id: tunnel
+        run: |
+          set -euo pipefail
+          curl -fsSL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+          ./cloudflared tunnel --no-autoupdate --url http://localhost:8080 > tunnel.log 2>&1 &
+          URL=""
+          for i in $(seq 1 40); do
+            URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' tunnel.log | head -1 || true)
+            if [ -n "$URL" ]; then break; fi
+            sleep 3
+          done
+          if [ -z "$URL" ]; then echo "tunnel did not come up"; cat tunnel.log; exit 1; fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "host=${URL#https://}" >> "$GITHUB_OUTPUT"
+
+      # PrestaShop keeps its own domain in the database and will bounce you to
+      # mlicanada.com unless it is told the tunnel hostname first.
+      - name: Point the shop at the tunnel and seed one admin account
+        env:
+          PSHOST: ${{ steps.tunnel.outputs.host }}
+          ADMIN_PW: ${{ secrets.ADMIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          PW="${ADMIN_PW:-}"
+          if [ -z "$PW" ]; then PW="$(openssl rand -base64 12)"; fi
+          echo "::add-mask::$PW"
+          HASH=$(php -r 'echo password_hash($argv[1], PASSWORD_BCRYPT);' "$PW")
+          {
+            echo "UPDATE ps_shop_url SET domain='$PSHOST', domain_ssl='$PSHOST', physical_uri='/';"
+            echo "UPDATE ps_configuration SET value='$PSHOST' WHERE name IN ('PS_SHOP_DOMAIN','PS_SHOP_DOMAIN_SSL');"
+            echo "UPDATE ps_configuration SET value='1' WHERE name IN ('PS_SSL_ENABLED','PS_SSL_ENABLED_EVERYWHERE','PS_SHOP_ENABLE');"
+            echo "UPDATE ps_configuration SET value='0' WHERE name IN ('PS_SHOP_ENABLE_MAINTENANCE','PS_MAINTENANCE');"
+            echo "DELETE FROM ps_employee;"
+            echo "INSERT INTO ps_employee (id_profile,id_lang,lastname,firstname,email,passwd,active,optin,id_shop,default_tab,bo_theme,bo_menu,stats_date_from,stats_date_to) VALUES (1,1,'Admin','MLI','admin@mlicanada.com','$HASH',1,0,1,1,'default',1,'2026-01-01','2026-12-31');"
+          } > seed.sql
+          mysql -h 127.0.0.1 -u root -pshoproot jinwu_shop < seed.sql
+          rm -f seed.sql
+          echo "PS_ADMIN_PW=$PW" >> "$GITHUB_ENV"
+
+      - name: Start PrestaShop
+        run: |
+          set -euo pipefail
+          docker run -d --name ps --network host \
+            -e PS_INSTALL_AUTO=0 -e PS_ERASE_DB=0 -e PS_DEV_MODE=0 \
+            -e DB_SERVER=127.0.0.1 -e DB_PORT=3306 -e DB_NAME=jinwu_shop \
+            -e DB_USER=root -e DB_PASSWD=shoproot -e DB_PREFIX=ps_ \
+            -e PS_DOMAIN="${{ steps.tunnel.outputs.host }}" \
+            prestashop/prestashop:1.7.7.5
+          for i in $(seq 1 60); do
+            if docker exec ps test -f /var/www/html/index.php 2>/dev/null; then break; fi
+            sleep 5
+          done
+          echo "--- /var/www/html ---"
+          docker exec ps sh -c 'ls /var/www/html | head -30'
+          echo "--- admin dir ---"
+          docker exec ps sh -c 'ls -d /var/www/html/admin* 2>/dev/null || true'
+
+      - name: Overlay the real theme, modules and product images
+        run: |
+          set -euo pipefail
+          docker cp overlay/themes/. ps:/var/www/html/themes/
+          docker cp overlay/modules/. ps:/var/www/html/modules/
+          docker cp overlay/img/. ps:/var/www/html/img/
+          docker cp overlay/translations/. ps:/var/www/html/translations/ || true
+          docker cp overlay/mails/. ps:/var/www/html/mails/ || true
+          docker exec ps sh -c 'chown -R www-data:www-data /var/www/html; rm -rf /var/www/html/var/cache/*'
+          docker exec ps sh -c "sed -i 's/^Listen 80\$/Listen 8080/' /etc/apache2/ports.conf; sed -i 's/:80>/:8080>/' /etc/apache2/sites-available/*.conf; apache2ctl -k graceful 2>/dev/null || apache2ctl -k restart 2>/dev/null || true"
+          sleep 8
+          echo "local check: $(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ || true)"
+
+      - name: Where to go
+        run: |
+          ADMIN_DIR=$(docker exec ps sh -c 'ls -d /var/www/html/admin* 2>/dev/null | head -1' | xargs -r basename || echo admin)
+          {
+            echo "## mlicanada admin is open"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Shop  | ${{ steps.tunnel.outputs.url }} |"
+            echo "| Admin | ${{ steps.tunnel.outputs.url }}/$ADMIN_DIR |"
+            echo "| User  | admin@mlicanada.com |"
+            echo "| Pass  | the ADMIN_PASSWORD secret, or the generated one in the log |"
+            echo "| Open for | ${{ inputs.minutes }} minutes |"
+            echo ""
+            echo "Customers and orders are deliberately absent: this copy holds the catalogue only."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Hold the admin open
+        run: |
+          MINS=${{ inputs.minutes }}
+          if [ "$MINS" -gt 300 ]; then MINS=300; fi
+          for i in $(seq 1 "$MINS"); do
+            sleep 60
+            if [ -z "$(docker ps --filter name=ps --filter status=running -q)" ]; then
+              echo "container stopped early"
+              docker logs --tail 40 ps
+              break
+            fi
+          done
+
+      - name: Save the edited catalogue back to the repo
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -z "$(docker ps -a --filter name=ps -q)" ]; then echo "no container; nothing to save"; exit 0; fi
+          mysqldump -h 127.0.0.1 -u root -pshoproot --single-transaction --no-tablespaces \
+            --skip-comments --default-character-set=utf8mb4 jinwu_shop \
+            --ignore-table=jinwu_shop.ps_employee > shop.sql
+          # the person-free guarantee holds on the way back too: structure only
+          mysqldump -h 127.0.0.1 -u root -pshoproot --no-data --skip-comments jinwu_shop ps_employee >> shop.sql
+          gzip -9 -c shop.sql > db/mlicanada_shop.sql.gz
+          rm -f shop.sql
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add db/mlicanada_shop.sql.gz
+          git diff --cached --quiet || git commit -m "admin session: catalogue updated"
+          git push || echo "nothing to push"
+
+      - name: Rebuild and deploy the static site from this PrestaShop
+        if: ${{ always() && inputs.republish }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::warning::CLOUDFLARE_API_TOKEN not set - skipping deploy"
+            exit 0
+          fi
+          bash scripts/republish.sh http://localhost:8080
