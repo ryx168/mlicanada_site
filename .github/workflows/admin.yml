@@ -90,7 +90,12 @@ jobs:
             echo "UPDATE ps_configuration SET value='1' WHERE name IN ('PS_SSL_ENABLED','PS_SSL_ENABLED_EVERYWHERE','PS_SHOP_ENABLE');"
             echo "UPDATE ps_configuration SET value='0' WHERE name IN ('PS_SHOP_ENABLE_MAINTENANCE','PS_MAINTENANCE');"
             echo "DELETE FROM ps_employee;"
-            echo "INSERT INTO ps_employee (id_profile,id_lang,lastname,firstname,email,passwd,active,optin,id_shop,default_tab,bo_theme,bo_menu,stats_date_from,stats_date_to) VALUES (1,1,'Admin','MLI','admin@mlicanada.com','$HASH',1,0,1,1,'default',1,'2026-01-01','2026-12-31');"
+            # 1.7.7 keeps the shop association in ps_employee_shop; ps_employee
+            # itself has no id_shop column, and naming one makes the seed fail
+            # and leaves no way to log in.
+            echo "INSERT INTO ps_employee (id_profile,id_lang,lastname,firstname,email,passwd,active,optin,default_tab,bo_theme,bo_menu,stats_date_from,stats_date_to) VALUES (1,1,'Admin','MLI','admin@mlicanada.com','$HASH',1,0,1,'default',1,'2026-01-01','2026-12-31');"
+            echo "DELETE FROM ps_employee_shop;"
+            echo "INSERT INTO ps_employee_shop (id_employee,id_shop) SELECT id_employee,1 FROM ps_employee;"
           } > seed.sql
           mysql -h 127.0.0.1 -u root -pshoproot jinwu_shop < seed.sql
           rm -f seed.sql
