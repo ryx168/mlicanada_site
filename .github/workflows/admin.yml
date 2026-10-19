@@ -183,6 +183,17 @@ jobs:
           echo "  control (missing page) -> $ctl"
           [ "$home" = "200" ] || { echo "::error::shop did not return 200"; fail=1; }
           [ "$adm" = "200" ]  || { echo "::error::admin did not return 200"; fail=1; }
+          if [ "$fail" != "0" ]; then
+            echo "===== apache error log ====="
+            docker exec ps sh -c 'tail -40 /var/log/apache2/error.log 2>/dev/null' || true
+            echo "===== prestashop logs ====="
+            docker exec ps sh -c 'tail -30 /var/www/html/var/logs/*.log 2>/dev/null' || true
+            echo "===== what the shop actually returned ====="
+            head -c 600 /tmp/home.html || true
+            echo
+            echo "===== php fatal, straight from the CLI ====="
+            docker exec ps sh -c 'cd /var/www/html && php -r "define(\"_PS_ADMIN_DIR_\",\"/var/www/html/admin\"); require \"config/config.inc.php\"; echo \"config loaded ok\n\";" 2>&1 | tail -20' || true
+          fi
           exit $fail
 
       - name: Where to go
