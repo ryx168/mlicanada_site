@@ -208,10 +208,28 @@ jobs:
           docker cp overlay-extra/htaccess ps:/var/www/html/.htaccess
           docker exec ps sh -c 'chown -R www-data:www-data /var/www/html; rm -rf /var/www/html/var/cache/*'
           docker exec ps sh -c 'a2enmod rewrite >/dev/null 2>&1 || true'
-          docker exec ps sh -c "sed -i 's/^Listen 80\$/Listen 8080/' /etc/apache2/ports.conf; sed -i 's/:80>/:8080>/' /etc/apache2/sites-available/*.conf; apache2ctl -k graceful 2>/dev/null || apache2ctl -k restart 2>/dev/null || true"
+          # Listen on 80 AND 8080, not 8080 alone. The tunnel points at 8080,
+          # but republish.sh crawls the shop on its REAL hostname via
+          # /etc/hosts so the export's canonical URLs are mlicanada.com and
+          # not a dead trycloudflare address - and that crawl goes to port 80.
+          # Moving apache off 80 made republish abort with
+          # "http://mlicanada.com/en/ -> 000, shop is not answering on its own
+          # domain". A port in the crawl URL is not an option: it would end up
+          # in every canonical tag.
+          docker exec ps sh -c "grep -q '^Listen 8080' /etc/apache2/ports.conf || echo 'Listen 8080' >> /etc/apache2/ports.conf"
+          docker exec ps sh -c "sed -i 's|<VirtualHost \*:80>|<VirtualHost *:80 *:8080>|' /etc/apache2/sites-available/*.conf"
+          docker exec ps sh -c 'apache2ctl -k graceful 2>/dev/null || apache2ctl -k restart 2>/dev/null || true'
           sleep 8
           code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ || true)
-          echo "local check: $code"
+          echo "local check :8080 (the tunnel) -> $code"
+          # Port 80 must answer too, or republish.sh cannot crawl.
+          code80=$(curl -s -o /dev/null -w '%{http_code}' http://localhost/ || true)
+          echo "local check :80   (the crawl)  -> $code80"
+          if [ "$code80" = "000" ]; then
+            echo "::error::apache is not listening on port 80 - republish would abort"
+            docker exec ps sh -c 'grep -n Listen /etc/apache2/ports.conf; grep -n VirtualHost /etc/apache2/sites-available/*.conf' || true
+            exit 1
+          fi
           # /var/log/apache2/error.log is EMPTY in this image - php:apache
           # sends both logs to the container's stdout/stderr. Tailing the file
           # is why a blanket 500 from a bad .htaccess looked like it had no
