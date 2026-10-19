@@ -40,3 +40,13 @@ jobs:
           echo "=== permissions actually on this token ==="
           curl -s -H "Authorization: Bearer $TOKEN" "$B/user/tokens/verify" \
             | python3 -c "import sys,json; d=json.load(sys.stdin); print('   status:', (d.get('result') or {}).get('status'), '| errors:', d.get('errors'))" || true
+          echo
+          echo "=== which accounts can this token actually see? ==="
+          echo "    (an id printed as *** is the one in CLOUDFLARE_ACCOUNT_ID - that is the match we want)"
+          curl -s -H "Authorization: Bearer $TOKEN" "$B/accounts?per_page=20" \
+            | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for a in d.get('result') or []:
+    print('    %-34s %s' % (a.get('name'), a.get('id')))
+" || true
