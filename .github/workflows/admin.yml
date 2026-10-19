@@ -37,13 +37,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch the overlay (theme, modules, product images)
+      # The theme and modules are commercial (Webibazaar), so they are NOT in
+      # this public repo - they live in a private R2 bucket and need the token.
+      - name: Fetch the overlay (theme, modules, product images) from R2
         env:
-          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          gh release download assets --repo "$GITHUB_REPOSITORY" -p mlicanada_overlay.tgz -D .
-          mkdir -p overlay && tar xzf mlicanada_overlay.tgz -C overlay
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is required: the theme, modules and product images are licensed and live in a private R2 bucket, not in this repo."
+            exit 1
+          fi
+          for p in 00 01 02; do
+            npx --yes wrangler@4 r2 object get "mlicanada-admin/overlay.part$p" --remote --file="overlay.part$p"
+          done
+          cat overlay.part00 overlay.part01 overlay.part02 > overlay.tgz
+          mkdir -p overlay && tar xzf overlay.tgz -C overlay
+          rm -f overlay.part0* overlay.tgz
           echo "overlay: $(find overlay -type f | wc -l) files, $(du -sh overlay | cut -f1)"
 
       - name: Load the catalogue database

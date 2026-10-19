@@ -35,29 +35,37 @@ Without `CLOUDFLARE_API_TOKEN` the admin still works; only the deploy is skipped
 
 | path | what |
 |---|---|
-| `db/mlicanada_shop.sql.gz` | the catalogue database, **person-free** |
+| `db/mlicanada_shop.sql.gz` | the catalogue database, **person-free and secret-free** |
 | `functions/` | the Pages Functions the live site runs |
 | `scripts/` | the export pipeline |
-| release `assets` → `mlicanada_overlay.tgz` | theme, modules and product images (383 MB, kept out of git history) |
+| R2 `mlicanada-admin/overlay.part*` | theme, modules and product images (383 MB) — **not in this repo**: the theme and modules are commercial, so they sit in a private bucket and the workflow needs `CLOUDFLARE_API_TOKEN` to fetch them |
 
-### The database here holds no personal data
+### The database here holds no personal data and no credentials
 336 tables. Customers, addresses, orders, carts, messages, newsletter
-subscriptions and employees are **structure-only — zero rows**; everything the
-catalogue needs has its data. Verified on export, and the save-back step
-re-applies the same rule so an admin session cannot leak personal data into the
-repo. The 480 customer records and 5 orders stay on server1.
+subscriptions, employees and webservice accounts are **structure-only — zero
+rows**; everything the catalogue needs has its data. The 480 customer records
+and 5 orders stay on the origin.
 
-The workflow seeds exactly one admin account at boot and never writes employee
-rows back.
+`ps_configuration` is regenerated with credential values blanked, because the
+live shop keeps its SMTP password, an RSA private key and a live payment secret
+in that table. 12 values are emptied; the rows remain so PrestaShop still
+boots. Verified on export: no private keys, no provider secrets.
+
+The save-back step re-applies both rules, so an admin session cannot push
+personal data or credentials into this repo. The workflow seeds exactly one
+admin account at boot and never writes employee rows back.
+
+Because those values are blank, anything that needs them is inert in the
+runner — outbound shop mail and payment modules will not work there. That is
+deliberate: this copy exists to edit the catalogue.
 
 ## Why it is built this way
 
 * **Pristine core.** The runner downloads the official PrestaShop 1.7.7.5 image
-  and overlays only the theme, modules and images. The live tree has been
-  compromised twice (85 PHP-in-image webshells quarantined 2026-10-18, plus an
-  unauthenticated admin-password-reset backdoor found at
-  `admin168we3cgm/reset-password.php` on 2026-10-19). 21,429 PHP files cannot be
-  certified clean, so none of them are carried over.
+  and overlays only the theme, modules and images. The origin's own PHP tree is
+  21,429 files with a history of compromise and cannot be certified clean, so
+  none of it is carried over. The overlay is scanned before upload (8,312
+  images checked for PHP payloads, 0 found).
 * **7.6 GB → 3.4 MB.** `ps_layered_filter_block` alone was 6.3 GB of
   regenerable facet cache, and `ps_connections`/`ps_guest` another 1.3 GB of
   visitor stats. The actual shop is 23.9 MB.
