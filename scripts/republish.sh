@@ -43,19 +43,35 @@ for line in open('canon.tsv', encoding='utf-8'):
 open('pages.txt', 'w', newline='\n').write('\n'.join(sorted(pages)) + '\n')
 print('   product pages:', len(pages))
 PY
-# categories, CMS and the two language roots come straight out of the database
+# Categories, CMS pages and the two language roots come straight out of the
+# database - as THREE separate queries, not one UNION. ps_category_lang and
+# ps_cms_lang do not share a collation, so the UNION died with
+#   ERROR 1271: Illegal mix of collations for operation 'UNION'
+# and because mysql's non-zero exit was never checked, pages.txt silently kept
+# only the 518 product pages: no categories, no CMS, not even /en/ or /qc/.
+# The crawl then "succeeded" with a third of the site missing.
+before=$(wc -l < pages.txt)
 $MYSQL "$DB" -N -B -e "
   SELECT CONCAT('http://$HOST/', l.iso_code, '/', c.id_category, '-', cl.link_rewrite)
   FROM ps_category c
   JOIN ps_category_lang cl ON cl.id_category=c.id_category
   JOIN ps_lang l ON l.id_lang=cl.id_lang
-  WHERE c.active=1 AND c.id_category>1
-  UNION ALL
+  WHERE c.active=1 AND c.id_category>1" >> pages.txt   || { echo "::error::category URL query failed"; exit 1; }
+cats=$(( $(wc -l < pages.txt) - before )); before=$(wc -l < pages.txt)
+$MYSQL "$DB" -N -B -e "
   SELECT CONCAT('http://$HOST/', l.iso_code, '/content/', m.id_cms, '-', ml.link_rewrite)
   FROM ps_cms m JOIN ps_cms_lang ml ON ml.id_cms=m.id_cms
-  JOIN ps_lang l ON l.id_lang=ml.id_lang WHERE m.active=1
-  UNION ALL
-  SELECT CONCAT('http://$HOST/', iso_code, '/') FROM ps_lang WHERE active=1" >> pages.txt
+  JOIN ps_lang l ON l.id_lang=ml.id_lang WHERE m.active=1" >> pages.txt   || { echo "::error::CMS URL query failed"; exit 1; }
+cms=$(( $(wc -l < pages.txt) - before )); before=$(wc -l < pages.txt)
+$MYSQL "$DB" -N -B -e "
+  SELECT CONCAT('http://$HOST/', iso_code, '/') FROM ps_lang WHERE active=1" >> pages.txt   || { echo "::error::language root query failed"; exit 1; }
+roots=$(( $(wc -l < pages.txt) - before ))
+echo "   categories: $cats   cms: $cms   language roots: $roots"
+# None of these may be zero: each one was silently zero before this.
+if [ "$cats" -eq 0 ] || [ "$cms" -eq 0 ] || [ "$roots" -eq 0 ]; then
+  echo "::error::the page list is incomplete (categories=$cats cms=$cms roots=$roots)"
+  exit 1
+fi
 sort -u -o pages.txt pages.txt
 echo "   total pages to crawl: $(wc -l < pages.txt)"
 

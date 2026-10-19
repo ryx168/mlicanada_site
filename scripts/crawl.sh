@@ -48,6 +48,18 @@ for pass in 1 2 3 4; do
   n=$(wc -l < todo.txt)
   echo "      pass $pass: $(wc -l < linked.txt) linked, $n not on disk"
   [ "$n" -eq 0 ] && break
+  # A pass that fetches NOTHING repeats forever and the loop just ends,
+  # leaving the export short with no stated reason - the wget errors go to
+  # crawl.log, which nobody prints. Say it out loud instead.
+  if [ "${prev2:-}" = "$n" ]; then
+    echo "      ::error::pass $pass fetched nothing - still $n missing"
+    echo "      --- first 5 URLs it could not get ---"
+    head -5 todo.txt
+    echo "      --- what wget said (last 20) ---"
+    grep -aE 'ERROR|failed|unable|refused|Connecting' "$LOG" | tail -20
+    break
+  fi
+  prev2="$n"
   fetch todo.txt -E
 done
 
@@ -62,7 +74,17 @@ for pass in 1 2 3; do
   n=$(wc -l < atodo.txt)
   echo "      pass $pass: $(wc -l < assets.txt) referenced, $n missing"
   [ "$n" -eq 0 ] && break
+  if [ "${prev3:-}" = "$n" ]; then
+    echo "      ::error::pass $pass fetched no assets - still $n missing"
+    echo "      --- first 5 asset URLs it could not get ---"
+    head -5 atodo.txt
+    echo "      --- what wget said (last 20) ---"
+    grep -aE 'ERROR|failed|unable|refused|Connecting' "$LOG" | tail -20
+    break
+  fi
+  prev3="$n"
   fetch atodo.txt -nc
 done
 
 echo "   crawled: $(find "$OUT" -type f | wc -l) files, $(du -sh "$OUT" | cut -f1)"
+echo "   wget errors in crawl.log: $(grep -acE 'ERROR|failed:' "$LOG" || true)"
