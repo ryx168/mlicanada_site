@@ -226,6 +226,31 @@ jobs:
           grep -qi 'password' /tmp/admin.html \
             && echo "     admin login form present: yes" \
             || { echo "     ::error::admin page has no login form"; fail=1; }
+          # A product image, through the .htaccess rewrite that maps the
+          # catalogue's virtual path (/26-home_default/x.jpg) onto
+          # img/p/2/6/... . Nothing else exercises those rules, and they are
+          # the half of the origin's .htaccess that had to be rewritten for the
+          # throwaway tunnel hostname. Checked by CONTENT TYPE, not status:
+          # PrestaShop answers a missing image with an HTML 404 page.
+          img=$(grep -oiE 'src="/[0-9]+-[A-Za-z0-9_]+/[^"]+[.](jpg|jpeg|png|webp)"' /tmp/home.html | head -1 | sed 's/^src="//I; s/"$//')
+          if [ -n "$img" ]; then
+            ct=$(curl -s -o /dev/null -w '%{content_type}' "$URL$img" || true)
+            echo "  product image $img -> $ct"
+            case "$ct" in
+              image/*) echo "     product images render: yes" ;;
+              *) echo "::error::product image did not come back as an image (got $ct) - the .htaccess image rewrites are not firing"; fail=1 ;;
+            esac
+            # Control: the same shape of path for an id that cannot exist must
+            # NOT come back as an image, or the check above proves nothing.
+            cct=$(curl -s -o /dev/null -w '%{content_type}' "$URL/999999-home_default/definitely-not-real.jpg" || true)
+            echo "  control image path -> $cct"
+            case "$cct" in
+              image/*) echo "::error::a nonexistent image path returned an image - the image check cannot discriminate"; fail=1 ;;
+            esac
+          else
+            echo "::error::no product image referenced on the home page at all"
+            fail=1
+          fi
           # control: a path that cannot exist must not look like a working page
           ctl=$(curl -s -o /tmp/ctl.html -w '%{http_code}' "$URL/en/DEFINITELY-NOT-REAL-12345" || true)
           echo "  control (missing page) -> $ctl"
