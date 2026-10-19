@@ -136,6 +136,28 @@ jobs:
           echo "--- admin dir ---"
           docker exec ps sh -c 'ls -d /var/www/html/admin* 2>/dev/null || true'
 
+      # The image ships UNINSTALLED (PS_INSTALL_AUTO=0): there is no
+      # app/config/parameters.php, and without it index.php redirects EVERY
+      # request to install/ - relatively, so curl -L walks
+      # /en/install/install/install/... until it gives up. That is exactly what
+      # the old 302-only check was passing as a working shop. The catalogue is
+      # already loaded, so declare the install finished instead of running the
+      # installer over it.
+      - name: Declare PrestaShop installed against the loaded database
+        run: |
+          set -euo pipefail
+          php scripts/mkparams.php parameters.php
+          php -l parameters.php
+          docker exec ps sh -c 'mkdir -p /var/www/html/app/config'
+          docker cp parameters.php ps:/var/www/html/app/config/parameters.php
+          rm -f parameters.php
+          # install/ is what index.php redirects to, and an installed shop must
+          # not keep it - it is a standing liability as well as the loop.
+          docker exec ps sh -c 'rm -rf /var/www/html/install /var/www/html/var/cache/*'
+          docker exec ps sh -c 'chown -R www-data:www-data /var/www/html/app/config'
+          docker exec ps sh -c 'test -d /var/www/html/install && echo "install/ STILL THERE" || echo "install/ removed"'
+          docker exec ps php -r '$c = require "/var/www/html/app/config/parameters.php"; echo "parameters.php loads in the container, db=", $c["parameters"]["database_name"], PHP_EOL;'
+
       - name: Overlay the real theme, modules and product images
         run: |
           set -euo pipefail
@@ -175,7 +197,7 @@ jobs:
           set -uo pipefail
           ADMIN_DIR=$(docker exec ps sh -c 'ls -d /var/www/html/admin* 2>/dev/null | head -1' | xargs -r basename || echo admin)
           fail=0
-          home=$(curl -s -L -o /tmp/home.html -w '%{http_code}' "$URL/en/" || true)
+          home=$(curl -s -L --max-redirs 5 -o /tmp/home.html -w '%{http_code}' "$URL/en/" || true)
           echo "  GET /en/            -> $home  ($(wc -c < /tmp/home.html) bytes)"
           grep -qi 'Amora' /tmp/home.html \
             && echo "     theme assets referenced: yes" \
@@ -183,7 +205,7 @@ jobs:
           grep -qi 'MLI' /tmp/home.html \
             && echo "     shop content present: yes" \
             || { echo "     ::error::shop HTML has no MLI content"; fail=1; }
-          adm=$(curl -s -L -o /tmp/admin.html -w '%{http_code}' "$URL/$ADMIN_DIR/" || true)
+          adm=$(curl -s -L --max-redirs 5 -o /tmp/admin.html -w '%{http_code}' "$URL/$ADMIN_DIR/" || true)
           echo "  GET /$ADMIN_DIR/ -> $adm  ($(wc -c < /tmp/admin.html) bytes)"
           grep -qi 'password' /tmp/admin.html \
             && echo "     admin login form present: yes" \
