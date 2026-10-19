@@ -13,6 +13,24 @@
  */
 $out = isset($argv[1]) ? $argv[1] : 'parameters.php';
 
+// new_cookie_key is NOT free-form. PrestaShop feeds it straight to
+// Defuse\Crypto\Key::loadFromAsciiSafeString(), which wants that library's
+// own checksummed-hex format - a base64 blob makes config.inc.php die with
+// "Encoding::hexToBin() input is not a hex string" on EVERY request, shop and
+// admin alike, as a blank 500. Only the defuse library can mint one, and it
+// lives in the container's vendor/ tree, so the caller passes it in.
+if (!isset($argv[2]) || $argv[2] === '') {
+    fwrite(STDERR, "usage: mkparams.php <out-file> <new_cookie_key>
+"
+        . "  generate the key with, inside the PrestaShop container:
+"
+        . "  php -r 'require \"/var/www/html/vendor/autoload.php\";"
+        . " echo Defuse\Crypto\Key::createNewRandomKey()->saveToAsciiSafeString();'
+");
+    exit(1);
+}
+$newCookieKey = $argv[2];
+
 $p = array(
     'database_host'     => '127.0.0.1',
     'database_port'     => '3306',
@@ -34,9 +52,11 @@ $p = array(
     // Fresh keys are fine here: 1.7 hashes employee and customer passwords
     // with bcrypt, so nothing in the dump depends on these values. They only
     // invalidate cookies, and this container is thrown away anyway.
+    // cookie_key is the legacy key and may be any random string; see the note
+    // at the top for why new_cookie_key may not be.
     'cookie_key'        => bin2hex(random_bytes(28)),
     'cookie_iv'         => substr(bin2hex(random_bytes(8)), 0, 8),
-    'new_cookie_key'    => base64_encode(random_bytes(32)),
+    'new_cookie_key'    => $newCookieKey,
     'api_public_key'    => '',
     'api_private_key'   => '',
     'front_controllers' => array(),
