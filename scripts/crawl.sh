@@ -18,7 +18,22 @@ mkdir -p "$OUT"
 fetch() {
   local list="$1"; shift
   [ -s "$list" ] || { echo "   (nothing to fetch)"; return 0; }
-  xargs -a "$list" -P "$JOBS" -n 10 wget \
+  # Normalise the list before wget sees it, for two reasons proven by
+  # crawl.log:
+  #  * The shop emits absolute https://<host>/... references (canonicals, the
+  #    blog module, anything built with ssl=true, since domain_ssl is set).
+  #    This crawl reaches the container over plain HTTP through /etc/hosts and
+  #    nothing listens on 443, so every one of those was "Connection refused"
+  #    on every pass, forever - 29 pages and 913 assets silently absent.
+  #  * A reference containing whitespace is split by xargs into separate
+  #    arguments, and wget then reports "unable to resolve host address 'du'".
+  local clean="$list.clean"
+  sed "s|^https://$HOST/|http://$HOST/|" "$list"     | grep -vE '[[:space:]]' | sort -u > "$clean"
+  local dropped=$(( $(wc -l < "$list") - $(wc -l < "$clean") ))
+  if [ "$dropped" -gt 0 ]; then
+    echo "      (list normalised: $dropped line(s) dropped as malformed or merged)"
+  fi
+  xargs -a "$clean" -P "$JOBS" -n 10 wget \
       -x -nH -P "$OUT" --max-redirect=0 \
       --timeout=30 --tries=3 --waitretry=3 --no-check-certificate \
       -e robots=off --user-agent='Mozilla/5.0 (static-export)' \
