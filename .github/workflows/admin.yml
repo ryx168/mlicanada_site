@@ -149,6 +149,36 @@ jobs:
           sleep 8
           echo "local check: $(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ || true)"
 
+      # A status code alone proves nothing here: PrestaShop 302s "/" to "/en/"
+      # whether or not the shop renders. Check the delivered HTML, through the
+      # tunnel, so a broken shop never gets handed over as a working URL.
+      - name: Prove the shop and the admin actually render
+        env:
+          URL: ${{ steps.tunnel.outputs.url }}
+        run: |
+          set -uo pipefail
+          ADMIN_DIR=$(docker exec ps sh -c 'ls -d /var/www/html/admin* 2>/dev/null | head -1' | xargs -r basename || echo admin)
+          fail=0
+          home=$(curl -s -L -o /tmp/home.html -w '%{http_code}' "$URL/en/" || true)
+          echo "  GET /en/            -> $home  ($(wc -c < /tmp/home.html) bytes)"
+          grep -qi 'Amora' /tmp/home.html \
+            && echo "     theme assets referenced: yes" \
+            || { echo "     ::error::shop HTML does not reference the Amora theme"; fail=1; }
+          grep -qi 'MLI' /tmp/home.html \
+            && echo "     shop content present: yes" \
+            || { echo "     ::error::shop HTML has no MLI content"; fail=1; }
+          adm=$(curl -s -L -o /tmp/admin.html -w '%{http_code}' "$URL/$ADMIN_DIR/" || true)
+          echo "  GET /$ADMIN_DIR/ -> $adm  ($(wc -c < /tmp/admin.html) bytes)"
+          grep -qi 'password' /tmp/admin.html \
+            && echo "     admin login form present: yes" \
+            || { echo "     ::error::admin page has no login form"; fail=1; }
+          # control: a path that cannot exist must not look like a working page
+          ctl=$(curl -s -o /tmp/ctl.html -w '%{http_code}' "$URL/en/DEFINITELY-NOT-REAL-12345" || true)
+          echo "  control (missing page) -> $ctl"
+          [ "$home" = "200" ] || { echo "::error::shop did not return 200"; fail=1; }
+          [ "$adm" = "200" ]  || { echo "::error::admin did not return 200"; fail=1; }
+          exit $fail
+
       - name: Where to go
         run: |
           ADMIN_DIR=$(docker exec ps sh -c 'ls -d /var/www/html/admin* 2>/dev/null | head -1' | xargs -r basename || echo admin)
