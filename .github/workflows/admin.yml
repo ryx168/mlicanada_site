@@ -251,7 +251,16 @@ jobs:
           # the half of the origin's .htaccess that had to be rewritten for the
           # throwaway tunnel hostname. Checked by CONTENT TYPE, not status:
           # PrestaShop answers a missing image with an HTML 404 page.
-          img=$(grep -oiE 'src="/[0-9]+-[A-Za-z0-9_]+/[^"]+[.](jpg|jpeg|png|webp)"' /tmp/home.html | head -1 | sed 's/^src="//I; s/"$//')
+          # || true matters: the step runs under bash -e, so a grep that
+          # matches nothing aborts it silently with no output at all - which
+          # is exactly what happened the first time this check ran.
+          # The pattern allows an absolute src too: the live shop emits
+          # https://<tunnel>/29-home_default/... where the static export has
+          # the bare path.
+          img=$(grep -oiE 'src="[^"]*/[0-9]+-[A-Za-z0-9_]+/[^"]+[.](jpg|jpeg|png|webp)"' /tmp/home.html | head -1 | sed 's/^src="//I; s/"$//' || true)
+          case "$img" in
+            http://*|https://*) img="/$(echo "$img" | cut -d/ -f4-)" ;;
+          esac
           if [ -n "$img" ]; then
             ct=$(curl -s -o /dev/null -w '%{content_type}' "$URL$img" || true)
             echo "  product image $img -> $ct"
