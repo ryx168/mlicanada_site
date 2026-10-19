@@ -144,7 +144,13 @@ jobs:
           docker cp overlay/img/. ps:/var/www/html/img/
           docker cp overlay/translations/. ps:/var/www/html/translations/ || true
           docker cp overlay/mails/. ps:/var/www/html/mails/ || true
+          # PrestaShop generates .htaccess per install, so a pristine image has
+          # none and every friendly URL 404s. This is the origin's own file: it
+          # routes /en/... to index.php AND maps the virtual image paths
+          # (/26-home_default/x.jpg -> img/p/2/6/...) the catalogue depends on.
+          docker cp overlay-extra/htaccess ps:/var/www/html/.htaccess
           docker exec ps sh -c 'chown -R www-data:www-data /var/www/html; rm -rf /var/www/html/var/cache/*'
+          docker exec ps sh -c 'a2enmod rewrite >/dev/null 2>&1 || true'
           docker exec ps sh -c "sed -i 's/^Listen 80\$/Listen 8080/' /etc/apache2/ports.conf; sed -i 's/:80>/:8080>/' /etc/apache2/sites-available/*.conf; apache2ctl -k graceful 2>/dev/null || apache2ctl -k restart 2>/dev/null || true"
           sleep 8
           echo "local check: $(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ || true)"
