@@ -63,7 +63,13 @@ jobs:
           for i in $(seq 1 30); do
             mysqladmin ping -h 127.0.0.1 -P 3306 -u root -pshoproot --silent && break || sleep 3
           done
-          gunzip -c db/mlicanada_shop.sql.gz | mysql -h 127.0.0.1 -P 3306 -u root -pshoproot jinwu_shop
+          # The origin's MySQL allows '0000-00-00' dates and the data uses them;
+          # MySQL 5.7 is strict by default and rejects the import at row 6.
+          # Relax it globally so PrestaShop's own writes are tolerated too.
+          mysql -h 127.0.0.1 -u root -pshoproot -e "SET GLOBAL sql_mode='NO_ENGINE_SUBSTITUTION';"
+          gunzip -c db/mlicanada_shop.sql.gz \
+            | mysql -h 127.0.0.1 -P 3306 -u root -pshoproot \
+                    --init-command="SET sql_mode='NO_ENGINE_SUBSTITUTION'" jinwu_shop
           echo "products loaded: $(mysql -h 127.0.0.1 -u root -pshoproot -N -B -e 'SELECT COUNT(*) FROM ps_product' jinwu_shop)"
 
       - name: Open the tunnel and take its hostname
