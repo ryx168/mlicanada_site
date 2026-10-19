@@ -39,7 +39,12 @@ $p = array(
     'database_password' => 'shoproot',
     'database_prefix'   => 'ps_',
     'database_engine'   => 'InnoDB',
-    'mailer_transport'  => 'mail',
+    // 'mail' is NOT a valid transport: swiftmailer 6 dropped it, and the
+    // admin's Symfony container then dies with
+    // ServiceNotFoundException: non-existent service "mail" - a 500 on
+    // /admin/ while the shop front renders perfectly. 'smtp' is what
+    // PrestaShop's own parameters.yml.dist uses.
+    'mailer_transport'  => 'smtp',
     'mailer_host'       => '127.0.0.1',
     'mailer_user'       => null,
     'mailer_password'   => null,

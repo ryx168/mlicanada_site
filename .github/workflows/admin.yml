@@ -153,6 +153,8 @@ jobs:
           # can mint one and it lives in the container's vendor/ tree.
           NEWKEY=$(docker exec ps php -r 'require "/var/www/html/vendor/autoload.php"; echo Defuse\Crypto\Key::createNewRandomKey()->saveToAsciiSafeString();')
           echo "new_cookie_key: ${#NEWKEY} chars, starts ${NEWKEY:0:8}"
+          # The image's own defaults, for comparison with what we write.
+          docker exec ps sh -c 'cat /var/www/html/app/config/parameters.yml.dist 2>/dev/null || echo "(no parameters.yml.dist)"'
           # Prove it round-trips before it goes anywhere near parameters.php.
           docker exec -e K="$NEWKEY" ps php -r 'require "/var/www/html/vendor/autoload.php"; Defuse\Crypto\Key::loadFromAsciiSafeString(getenv("K")); echo "new_cookie_key round-trips", PHP_EOL;'
           php scripts/mkparams.php parameters.php "$NEWKEY"
