@@ -127,10 +127,29 @@ jobs:
             -e DB_USER=root -e DB_PASSWD=shoproot -e DB_PREFIX=ps_ \
             -e PS_DOMAIN="${{ steps.tunnel.outputs.host }}" \
             prestashop/prestashop:1.7.7.5
-          for i in $(seq 1 60); do
-            if docker exec ps test -f /var/www/html/index.php 2>/dev/null; then break; fi
+          # Waiting for index.php to merely EXIST is far too early. The
+          # entrypoint creates it, then keeps going - "Reapplying PrestaShop
+          # files", "Copying files from tmp directory" - and only then starts
+          # apache. Writing under /var/www/html during that window kills the
+          # container, and the next step dies with "container ... is not
+          # running". Wait until it is actually serving HTTP.
+          for i in $(seq 1 90); do
+            if docker logs ps 2>&1 | grep -q 'Starting web server'; then break; fi
             sleep 5
           done
+          code=000
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost/ || true)
+            if [ -n "$code" ] && [ "$code" != "000" ]; then break; fi
+            sleep 3
+          done
+          echo "container is serving, first response: $code"
+          docker ps --filter name=ps --format 'container status: {{.Status}}'
+          if [ -z "$(docker ps --filter name=ps --filter status=running -q)" ]; then
+            echo "::error::PrestaShop container is not running"
+            docker logs --tail 60 ps 2>&1 | tail -60 || true
+            exit 1
+          fi
           echo "--- /var/www/html ---"
           docker exec ps sh -c 'ls /var/www/html | head -30'
           echo "--- admin dir ---"
