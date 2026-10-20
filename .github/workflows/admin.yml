@@ -57,8 +57,23 @@ jobs:
             echo "::error::CLOUDFLARE_API_TOKEN is required: the theme, modules and product images are licensed and live in a private R2 bucket, not in this repo."
             exit 1
           fi
+          # Retry each part. Cloudflare returns a transient
+          # code 10500 "Internal authentication error: internal server error"
+          # on R2 reads - seen with a token that had worked twenty minutes
+          # earlier - and a single failure killed the run at step one.
           for p in 00 01 02; do
-            npx --yes wrangler@4 r2 object get "mlicanada-admin/overlay.part$p" --remote --file="overlay.part$p"
+            ok=no
+            for try in 1 2 3 4; do
+              if npx --yes wrangler@4 r2 object get "mlicanada-admin/overlay.part$p" --remote --file="overlay.part$p"; then
+                ok=yes; break
+              fi
+              echo "::warning::overlay.part$p attempt $try failed; retrying in $((try * 15))s"
+              sleep $((try * 15))
+            done
+            if [ "$ok" != "yes" ]; then
+              echo "::error::could not fetch overlay.part$p from R2 after 4 attempts"
+              exit 1
+            fi
           done
           cat overlay.part00 overlay.part01 overlay.part02 > overlay.tgz
           mkdir -p overlay && tar xzf overlay.tgz -C overlay
@@ -384,16 +399,16 @@ jobs:
           MINS=${{ inputs.minutes }}
           if [ "$MINS" -gt 300 ]; then MINS=300; fi
           EXP=$(date -u -d "+$MINS minutes" +%Y-%m-%dT%H:%M:%SZ)
-          jq -n --arg u "$URL/$ADMIN_DIR/" --arg e "$EXP" \n             '{admin_url:$u, expires_at:$e}' > session.json
+          jq -n --arg u "$URL/$ADMIN_DIR/" --arg e "$EXP"  '{admin_url:$u, expires_at:$e}' > session.json
           cat session.json
           R=${{ github.repository }}
           MAIN_SHA=$(gh api "repos/$R/git/ref/heads/main" --jq .object.sha)
           gh api "repos/$R/git/refs" -f ref=refs/heads/session -f sha="$MAIN_SHA" >/dev/null 2>&1 || true
           SHA=$(gh api "repos/$R/contents/session.json?ref=session" --jq .sha 2>/dev/null || true)
           if [ -n "${SHA:-}" ]; then
-            gh api -X PUT "repos/$R/contents/session.json" -f message="session open" \n              -f branch=session -f content="$(base64 -w0 session.json)" -f sha="$SHA" >/dev/null
+            gh api -X PUT "repos/$R/contents/session.json" -f message="session open"  -f branch=session -f content="$(base64 -w0 session.json)" -f sha="$SHA" >/dev/null
           else
-            gh api -X PUT "repos/$R/contents/session.json" -f message="session open" \n              -f branch=session -f content="$(base64 -w0 session.json)" >/dev/null
+            gh api -X PUT "repos/$R/contents/session.json" -f message="session open"  -f branch=session -f content="$(base64 -w0 session.json)" >/dev/null
           fi
           echo "published to the session branch"
 
@@ -423,7 +438,7 @@ jobs:
           SHA=$(gh api "repos/$R/contents/session.json?ref=session" --jq .sha 2>/dev/null || true)
           [ -n "${SHA:-}" ] || { echo "nothing published"; exit 0; }
           jq -n '{admin_url:"", expires_at:"1970-01-01T00:00:00Z"}' > session.json
-          gh api -X PUT "repos/$R/contents/session.json" -f message="session closed" \n            -f branch=session -f content="$(base64 -w0 session.json)" -f sha="$SHA" >/dev/null
+          gh api -X PUT "repos/$R/contents/session.json" -f message="session closed"  -f branch=session -f content="$(base64 -w0 session.json)" -f sha="$SHA" >/dev/null
           echo "session address retracted"
 
       - name: Save the edited catalogue back to the repo
