@@ -5,38 +5,42 @@
 // Lives in _launcher.js because a leading underscore is not routed by Pages;
 // functions/admin168we3cgm/index.js and [[path]].js bind it to the path.
 //
-// NOTE on that path: it is the directory that held the unauthenticated
-// reset-password.php backdoor (which set employee #1 to a known password) and
-// a publicly downloadable themes.tar, both quarantined 2026-10-18. Attackers
-// already know it, so expect it to be probed. Nothing here dispatches on a
-// GET, so probes cost no runner minutes - but the Start button does sit on a
-// known URL, and Cloudflare Access scoped to this path is the real fix.
+// IT AUTO-STARTS, BUT NOT ON THE GET ITSELF. The owner wanted no button. The
+// GET therefore returns a spinner page, and that page's own JavaScript POSTs
+// to start the session. The distinction is the whole safety margin:
 //
-// Same shape as the bodyspiritcentre /wp-admin launcher, and it carries that
-// project's hard-won rule: A GET NEVER STARTS A SESSION. When those launchers
-// auto-started on GET, scanners from France, Russia and the US drove them
-// roughly hourly - 659 admin visits logged on one site in a single day - and
-// every probe spent a runner and put a login on the internet. A user-agent
-// filter did NOT stop it: they send a browser UA on the first request and only
-// reveal the tool on follow-ups. So a GET renders a button, and only a POST
-// dispatches.
+//   * On the two sibling launchers in this estate, dispatching on the GET got
+//     them driven roughly HOURLY by scanners - 659 admin visits logged on one
+//     site in a single day, from France, Russia and the US - and every probe
+//     spent a runner and put a login on the internet.
+//   * A user-agent filter did NOT stop it. They send a normal browser UA on
+//     the first request and only reveal python-requests on follow-ups.
+//   * What those tools do not do is execute JavaScript. So the dispatch sits
+//     behind a POST that only a real browser makes, and the owner still never
+//     clicks anything.
 //
-// The path is deliberately random rather than /admin or /wp-admin. That is not
-// a password - it only keeps scanners away from the Start button. The gate on
-// the admin itself is the PrestaShop login (the ADMIN_PASSWORD repo secret).
+// This path is also the directory that held the unauthenticated
+// reset-password.php backdoor (it set employee #1 to a known password) and a
+// publicly downloadable themes.tar, both quarantined 2026-10-18. Attackers
+// know it. Cloudflare Access scoped to this path remains the real fix; this is
+// the best available without a second login.
 //
-// It REDIRECTS into the session rather than proxying it. Proxying would keep
-// the URL on this domain, but PrestaShop stores its own domain in ps_shop_url
-// and ps_configuration and the workflow points those at the tunnel host, so a
-// proxied admin would emit links to the wrong origin and drop its login cookie
-// on the wrong domain. bodyspiritcentre can proxy only because WordPress is
-// told to use the LIVE host there.
+// It REDIRECTS into the session rather than proxying it. The image generates
+// its own admin directory name (admin650a7u3gr, and different every run), and
+// PrestaShop keeps its own domain in ps_shop_url, which the workflow points at
+// the tunnel - so a proxied admin would emit links to the wrong origin and
+// drop its login cookie on the wrong domain.
 const OWNER = 'ryx168';
 const REPO = 'mlicanada_site';
 const WORKFLOW = 'admin.yml';
 const SESSION_BRANCH = 'session';
 const SESSION_FILE = 'session.json';
-const MINUTES = '30';
+
+// 330 minutes. The owner asked for up to six hours; GitHub kills a job at six
+// (360), and the workflow's timeout-minutes is 350 so the catalogue-save step
+// still gets to run. 330 leaves headroom for boot and save. There is no idle
+// timeout - it runs until this expires or until Close is pressed.
+const MINUTES = '330';
 
 const H = {
   'content-type': 'text/html; charset=utf-8',
@@ -71,25 +75,25 @@ async function liveSession(env) {
   return s;
 }
 
-async function runState(env) {
+// Returns {state, id}. The id is needed to cancel.
+async function currentRun(env) {
   const r = await gh(env, '/actions/workflows/' + WORKFLOW + '/runs?per_page=5');
-  if (!r.ok) return 'unknown';
+  if (!r.ok) return { state: 'unknown', id: null };
   const d = await r.json();
   for (const run of (d.workflow_runs || [])) {
     if (run.status === 'queued' || run.status === 'in_progress' || run.status === 'waiting') {
-      return 'starting';
+      return { state: 'starting', id: run.id };
     }
   }
-  return 'idle';
+  return { state: 'idle', id: null };
 }
 
-// Mitigation, not a fix - see the note at the top. Kept because it costs
-// nothing and turns away the unsophisticated majority.
+// Mitigation, not the safety margin - the JavaScript requirement is. Kept
+// because it costs nothing and turns away the unsophisticated majority.
 function looksLikeAPerson(request) {
   const ua = (request.headers.get('user-agent') || '').toLowerCase();
   if (!ua) return false;
-  if (!(request.headers.get('accept') || '').includes('text/html')) return false;
-  return !/bot|crawl|spider|curl|wget|python|requests|httpx|go-http|java|libwww|scrapy|headless/.test(ua);
+  return !/bot|crawl|spider|curl|wget|python|requests|httpx|go-http|java|libwww|scrapy/.test(ua);
 }
 
 function esc(s) {
@@ -97,26 +101,56 @@ function esc(s) {
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+const CSS = 'body{font:15px/1.6 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;'
+  + 'background:#f4f5f7;color:#1c1e21;display:grid;place-items:center;min-height:100vh;margin:0}'
+  + '.c{background:#fff;padding:30px 28px;border-radius:12px;width:min(92vw,430px);text-align:center;'
+  + 'box-shadow:0 1px 3px rgba(0,0,0,.12),0 8px 24px rgba(0,0,0,.08)}'
+  + 'h1{font-size:19px;margin:0 0 6px}p{color:#606770;font-size:14px;margin:0 0 16px}'
+  + 'button,a.b{display:block;width:100%;box-sizing:border-box;padding:11px;margin-top:8px;'
+  + 'font:600 15px/1 inherit;color:#fff;background:#1877f2;border:0;border-radius:8px;'
+  + 'cursor:pointer;text-align:center;text-decoration:none}'
+  + 'button.sec{background:#e4e6eb;color:#1c1e21}'
+  + 'button[disabled]{opacity:.6;cursor:default}small{color:#8a8d91;font-size:12px}'
+  + '.sp{width:42px;height:42px;margin:4px auto 18px;border:4px solid #dfe3e8;'
+  + 'border-top-color:#1877f2;border-radius:50%;animation:s 1s linear infinite}'
+  + '@keyframes s{to{transform:rotate(360deg)}}'
+  + '.bar{height:4px;background:#dfe3e8;border-radius:2px;overflow:hidden;margin:14px 0 0}'
+  + '.bar i{display:block;height:100%;width:30%;background:#1877f2;border-radius:2px;'
+  + 'animation:b 1.6s ease-in-out infinite}'
+  + '@keyframes b{0%{margin-left:-30%}100%{margin-left:100%}}'
+  + '@media(prefers-color-scheme:dark){body{background:#18191a;color:#e4e6eb}'
+  + '.c{background:#242526;box-shadow:none}p{color:#b0b3b8}button.sec{background:#3a3b3c;color:#e4e6eb}'
+  + '.sp,.bar{border-color:#3a3b3c;background:#3a3b3c}}';
+
 function page(body, status) {
   const html = '<!doctype html><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
     + '<meta name="robots" content="noindex,nofollow"><title>MLI Canada admin</title>'
-    + '<style>body{font:15px/1.6 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;'
-    + 'background:#f4f5f7;color:#1c1e21;display:grid;place-items:center;min-height:100vh;margin:0}'
-    + '.c{background:#fff;padding:30px 28px;border-radius:12px;width:min(92vw,430px);'
-    + 'box-shadow:0 1px 3px rgba(0,0,0,.12),0 8px 24px rgba(0,0,0,.08)}'
-    + 'h1{font-size:19px;margin:0 0 6px}p{color:#606770;font-size:14px;margin:0 0 16px}'
-    + 'button,a.b{display:block;width:100%;box-sizing:border-box;padding:11px;'
-    + 'font:600 15px/1 inherit;color:#fff;background:#1877f2;border:0;border-radius:8px;'
-    + 'cursor:pointer;text-align:center;text-decoration:none}'
-    + 'button[disabled]{opacity:.6;cursor:default}small{color:#8a8d91;font-size:12px}'
-    + '@media(prefers-color-scheme:dark){body{background:#18191a;color:#e4e6eb}'
-    + '.c{background:#242526;box-shadow:none}p{color:#b0b3b8}}</style>'
-    + '<div class="c">' + body + '</div>';
+    + '<style>' + CSS + '</style><div class="c">' + body + '</div>';
   return new Response(html, { status: status || 200, headers: H });
 }
 
-const WAIT_SCRIPT = '<script>setTimeout(function(){location.reload()},10000)</script>';
+// The spinner page. Its script does the POST, so the GET itself never spends a
+// runner. The <noscript> fallback is a real button, so the admin is still
+// reachable with JavaScript off.
+function startingPage(alreadyRunning) {
+  return page('<div class="sp"></div>'
+    + '<h1>' + (alreadyRunning ? 'Starting&hellip;' : 'Starting the admin&hellip;') + '</h1>'
+    + '<p>Loading the catalogue, theme and product images. This takes about'
+    + ' three minutes.</p><div class="bar"><i></i></div>'
+    + '<p style="margin:16px 0 0"><small>The page opens the admin by itself when it is'
+    + ' ready.</small></p>'
+    + '<noscript><p><b>JavaScript is off.</b></p>'
+    + '<form method="POST"><button type="submit">Start the admin</button></form></noscript>'
+    + '<script>'
+    + 'var started=' + (alreadyRunning ? 'true' : 'false') + ';'
+    + 'function poll(){location.reload()}'
+    + 'if(started){setTimeout(poll,10000)}else{'
+    + 'fetch(location.pathname,{method:"POST",headers:{"x-start":"1"}})'
+    + '.then(function(){setTimeout(poll,10000)})'
+    + '.catch(function(){setTimeout(poll,10000)})}'
+    + '</script>');
+}
 
 export async function launcherGet({ env }) {
   if (!env.GH_TOKEN) {
@@ -127,41 +161,63 @@ export async function launcherGet({ env }) {
 
   const live = await liveSession(env);
   if (live) {
+    const closes = new Date(live.expires_at);
+    const leftMin = Math.max(0, Math.round((closes - Date.now()) / 60000));
     return page('<h1>The admin is open</h1>'
-      + '<p>This session closes at ' + esc(new Date(live.expires_at).toUTCString()) + '.</p>'
+      + '<p>Open for about ' + leftMin + ' more minutes, or until you close it.</p>'
       + '<a class="b" href="' + esc(live.admin_url) + '">Open the admin</a>'
-      + '<p style="margin:14px 0 0"><small>Sign in as admin@mlicanada.com. The address is'
-      + ' temporary and changes every session.</small></p>');
+      + '<form method="POST" id="cf"><input type="hidden" name="intent" value="close">'
+      + '<button class="sec" type="submit">Close the admin now</button></form>'
+      + '<p style="margin:14px 0 0"><small>Sign in as admin@mlicanada.com. Closing saves'
+      + ' your catalogue edits first. The address is temporary and changes every'
+      + ' session.</small></p>'
+      + '<script>document.getElementById("cf").addEventListener("submit",function(e){'
+      + 'if(!confirm("Close the admin? Your edits are saved first.")){e.preventDefault()}})</script>');
   }
 
-  if ((await runState(env)) === 'starting') {
-    return page('<h1>Starting&hellip;</h1><p>A session is booting - about three minutes,'
-      + ' while the catalogue and theme load. This page checks every ten seconds.</p>'
-      + WAIT_SCRIPT);
-  }
-
-  // A GET only ever offers the button. It must never dispatch.
-  return page('<h1>The admin is not running</h1>'
-    + '<p>It starts on demand, runs for ' + MINUTES + ' minutes and then shuts down.'
-    + ' Nothing is hosted between sessions.</p>'
-    + '<form method="POST"><button id="b" type="submit">Start the admin</button></form>'
-    + '<script>document.forms[0].addEventListener("submit",function(){'
-    + 'var b=document.getElementById("b");b.disabled=true;b.textContent="Starting..."})</script>');
+  // No session. Show the spinner and let its script start one - a GET must
+  // never dispatch. If a run is already on its way, just wait for it.
+  const run = await currentRun(env);
+  return startingPage(run.state === 'starting');
 }
 
 export async function launcherPost({ request, env }) {
   if (!env.GH_TOKEN) return page('<h1>Not configured</h1>', 503);
-  if (!looksLikeAPerson(request)) {
-    return page('<h1>Not started</h1><p>Start the admin from a browser.</p>', 403);
+
+  // Read the intent without trusting content-type. A browser form sends
+  // application/x-www-form-urlencoded, but gating on that header made the
+  // Close button fall through to the start path whenever the header was
+  // absent or unexpected - a silent and confusing failure.
+  let intent = '';
+  try {
+    intent = String((await request.formData()).get('intent') || '');
+  } catch (e) { /* no form body: this is a start */ }
+
+  if (intent === 'close') {
+    const run = await currentRun(env);
+    if (!run.id) return page('<h1>Nothing to close</h1><p>No session is running.</p>');
+    // Cancelling is safe: the catalogue-save step is `if: always()`, so edits
+    // are committed on the way out, and the session address is retracted.
+    const r = await gh(env, '/actions/runs/' + run.id + '/cancel', { method: 'POST' });
+    if (!r.ok && r.status !== 409) {
+      return page('<h1>Could not close it</h1><p>GitHub answered ' + r.status
+        + '. It will close on its own at the end of the session.</p>', 502);
+    }
+    return page('<h1>Closing&hellip;</h1><p>Your catalogue edits are being saved.</p>'
+      + '<div class="bar"><i></i></div>'
+      + '<script>setTimeout(function(){location.href=location.pathname},15000)</script>');
   }
 
-  // Never pile runs up. Reloading the waiting page used to dispatch a second
-  // run on the sibling projects, because the check raced the dispatch.
+  // A start. The JavaScript requirement is the gate; this is belt and braces.
+  if (!looksLikeAPerson(request)) {
+    return page('<h1>Not started</h1><p>Open this page in a browser.</p>', 403);
+  }
+
   const live = await liveSession(env);
   if (live) return Response.redirect(live.admin_url, 302);
-  if ((await runState(env)) === 'starting') {
-    return page('<h1>Already starting</h1><p>A session is on its way.</p>' + WAIT_SCRIPT);
-  }
+
+  const run = await currentRun(env);
+  if (run.state === 'starting') return startingPage(true);
 
   const r = await gh(env, '/actions/workflows/' + WORKFLOW + '/dispatches', {
     method: 'POST',
@@ -172,6 +228,5 @@ export async function launcherPost({ request, env }) {
     return page('<h1>Could not start it</h1><p>GitHub answered ' + r.status
       + '. The token is probably missing Actions write on the repo.</p>', 502);
   }
-  return page('<h1>Starting&hellip;</h1><p>About three minutes. This page checks every'
-    + ' ten seconds.</p>' + WAIT_SCRIPT);
+  return startingPage(true);
 }

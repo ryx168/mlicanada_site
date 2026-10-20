@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       minutes:
-        description: 'How long to keep the admin open (max 300)'
+        description: 'How long to keep the admin open (max 330; GitHub kills a job at 360 and the save step needs the slack)'
         required: true
         default: '120'
       republish:
@@ -397,7 +397,7 @@ jobs:
           set -uo pipefail
           ADMIN_DIR=$(docker exec ps sh -c 'ls -d /var/www/html/admin* 2>/dev/null | head -1' | xargs -r basename || echo admin)
           MINS=${{ inputs.minutes }}
-          if [ "$MINS" -gt 300 ]; then MINS=300; fi
+          if [ "$MINS" -gt 330 ]; then MINS=330; fi
           EXP=$(date -u -d "+$MINS minutes" +%Y-%m-%dT%H:%M:%SZ)
           jq -n --arg u "$URL/$ADMIN_DIR/" --arg e "$EXP"  '{admin_url:$u, expires_at:$e}' > session.json
           cat session.json
@@ -415,7 +415,7 @@ jobs:
       - name: Hold the admin open
         run: |
           MINS=${{ inputs.minutes }}
-          if [ "$MINS" -gt 300 ]; then MINS=300; fi
+          if [ "$MINS" -gt 330 ]; then MINS=330; fi
           for i in $(seq 1 "$MINS"); do
             sleep 60
             if [ -z "$(docker ps --filter name=ps --filter status=running -q)" ]; then
