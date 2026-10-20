@@ -142,6 +142,13 @@ jobs:
             # 1.7.7 keeps the shop association in ps_employee_shop; ps_employee
             # itself has no id_shop column, and naming one makes the seed fail
             # and leaves no way to log in.
+            # TWO logins, same password, both SuperAdmin. The owner's own
+            # address is seeded because that is what he actually types - the
+            # first real session failed with "The employee does not exist"
+            # against harry@superesolutions.com. admin@mlicanada.com is kept so
+            # anything that already refers to it still works. Two rows with the
+            # same rights and password are no wider an attack surface than one.
+            echo "INSERT INTO ps_employee (id_profile,id_lang,lastname,firstname,email,passwd,active,optin,default_tab,bo_theme,bo_menu,stats_date_from,stats_date_to) VALUES (1,1,'Ji','Harry','harry@superesolutions.com','$HASH',1,0,1,'default',1,'2026-01-01','2026-12-31');"
             echo "INSERT INTO ps_employee (id_profile,id_lang,lastname,firstname,email,passwd,active,optin,default_tab,bo_theme,bo_menu,stats_date_from,stats_date_to) VALUES (1,1,'Admin','MLI','admin@mlicanada.com','$HASH',1,0,1,'default',1,'2026-01-01','2026-12-31');"
             echo "DELETE FROM ps_employee_shop;"
             echo "INSERT INTO ps_employee_shop (id_employee,id_shop) SELECT id_employee,1 FROM ps_employee;"
@@ -365,7 +372,7 @@ jobs:
           # logs, not via the REST API, and not by any fetch. An annotation is
           # visible in `gh run view` while the session is still open, which is
           # the only moment it is useful.
-          echo "::notice title=Admin session::shop ${{ steps.tunnel.outputs.url }}/en/  |  admin ${{ steps.tunnel.outputs.url }}/$ADMIN_DIR/  |  user admin@mlicanada.com"
+          echo "::notice title=Admin session::shop ${{ steps.tunnel.outputs.url }}/en/  |  admin ${{ steps.tunnel.outputs.url }}/$ADMIN_DIR/  |  user harry@superesolutions.com"
           {
             echo "## mlicanada admin is open"
             echo ""
@@ -373,7 +380,7 @@ jobs:
             echo "|---|---|"
             echo "| Shop  | ${{ steps.tunnel.outputs.url }} |"
             echo "| Admin | ${{ steps.tunnel.outputs.url }}/$ADMIN_DIR |"
-            echo "| User  | admin@mlicanada.com |"
+            echo "| User  | harry@superesolutions.com (or admin@mlicanada.com) |"
             if [ "${ADMIN_LOGIN_POSSIBLE:-no}" = "yes" ]; then
               echo "| Pass  | the ADMIN_PASSWORD repo secret |"
             else
