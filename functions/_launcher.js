@@ -182,6 +182,8 @@ export async function launcherGet({ request, env }) {
     return page('<h1>The admin is open</h1>'
       + '<p>Open for about ' + leftMin + ' more minutes, or until you close it.</p>'
       + '<a class="b" href="' + esc(live.admin_url) + '">Open the admin</a>'
+      + '<form method="POST"><input type="hidden" name="intent" value="restart">'
+      + '<button class="sec" type="submit">Restart the admin</button></form>'
       + '<form method="POST" id="cf"><input type="hidden" name="intent" value="close">'
       + '<button class="sec" type="submit">Log out and close the admin</button></form>'
       + '<p style="margin:14px 0 0"><small>Sign in as harry@superesolutions.com'
@@ -211,6 +213,35 @@ export async function launcherPost({ request, env }) {
   try {
     intent = String((await request.formData()).get('intent') || '');
   } catch (e) { /* no form body: this is a start */ }
+
+  if (intent === 'restart') {
+    // End the current session and immediately queue a fresh one. The workflow's
+    // concurrency group is cancel-in-progress:false, so the new run waits in
+    // 'queued' until the cancelled one finishes winding down - which is what we
+    // want, because that wind-down is the step that saves the catalogue.
+    const run = await currentRun(env);
+    if (run.id) {
+      const c = await gh(env, '/actions/runs/' + run.id + '/cancel', { method: 'POST' });
+      if (!c.ok && c.status !== 409) {
+        return page('<h1>Could not restart</h1><p>GitHub answered ' + c.status
+          + ' cancelling the current session.</p>', 502);
+      }
+    }
+    const d = await gh(env, '/actions/workflows/' + WORKFLOW + '/dispatches', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ref: 'main', inputs: { minutes: MINUTES, republish: 'false' } }),
+    });
+    if (!d.ok) {
+      return page('<h1>Closed, but could not start a new one</h1>'
+        + '<p>GitHub answered ' + d.status + '. Reload this page to try again.</p>', 502);
+    }
+    return page('<div class="sp"></div><h1>Restarting&hellip;</h1>'
+      + '<p>Saving your edits, then booting a fresh session. Allow about four'
+      + ' minutes - a little longer than a cold start, because the old one has to'
+      + ' finish saving first.</p><div class="bar"><i></i></div>'
+      + '<script>setTimeout(function(){location.href=location.pathname},20000)</script>');
+  }
 
   if (intent === 'close') {
     const run = await currentRun(env);

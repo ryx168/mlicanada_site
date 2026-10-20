@@ -123,6 +123,31 @@ for (const q of ['?close', '?logout']) {
   check(q + ' also shows the panel', r.status === 200, 'status=' + r.status);
 }
 
+// 9c. Restart cancels the old run AND queues a new one.
+calls = []; stubFetch({ session: LIVE(), runs: [{ status: 'in_progress', id: 77 }] });
+r = await launcherPost({ request: req(BROWSER, { intent: 'restart' }), env: { GH_TOKEN: 't' } });
+body = await r.text();
+check('restart cancels the current run',
+      calls.some(c => c.endsWith('/actions/runs/77/cancel')), calls.join(' | '));
+check('restart dispatches exactly one new run', dispatches() === 1, calls.join(' | '));
+check('restart cancels BEFORE it dispatches',
+      calls.findIndex(c => c.includes('/cancel')) < calls.findIndex(c => c.includes('/dispatches')),
+      calls.join(' | '));
+check('restart shows a spinner', body.includes('class="sp"') && body.includes('Restarting'));
+
+// 9d. Restart with nothing running just starts one.
+calls = []; stubFetch();
+r = await launcherPost({ request: req(BROWSER, { intent: 'restart' }), env: { GH_TOKEN: 't' } });
+check('restart with no session still starts one', dispatches() === 1, calls.join(' | '));
+check('restart with no session cancels nothing', !calls.some(c => c.includes('/cancel')), calls.join(' | '));
+
+// 9e. The panel offers both actions.
+stubFetch({ session: LIVE(), runs: [{ status: 'in_progress', id: 77 }] });
+r = await launcherGet({ request: getReq('?logout'), env: { GH_TOKEN: 't' } });
+body = await r.text();
+check('panel offers Restart', body.includes('Restart the admin') && body.includes('value="restart"'));
+check('panel still offers close', body.includes('value="close"'));
+
 // 10. Close cancels the run.
 calls = []; stubFetch({ session: LIVE(), runs: [{ status: 'in_progress', id: 77 }] });
 r = await launcherPost({ request: req(BROWSER, { intent: 'close' }), env: { GH_TOKEN: 't' } });
