@@ -293,7 +293,15 @@ jobs:
           # extension, with logo.jpg (a real JPEG, 100x28) as the fallback.
           # Padded onto a 246x48 canvas because the template hardcodes
           # width=123 height=24, so an odd aspect ratio would be stretched.
-          SRC=$(ls -S overlay/img/shop-logo-*.jpg overlay/img/logo.jpg 2>/dev/null | head -1 || true)
+          # Explicit preference, NOT `ls -S`. Sorting by byte size picks
+          # logo.jpg (2758 bytes, a 100x28 JPEG) over
+          # shop-logo-1622684571.jpg (2709 bytes, a 160x72 PNG) - the smaller
+          # file is the better image. PS_LOGO points at shop-logo-*, so prefer
+          # that, then logo.png, then logo.jpg.
+          SRC=""
+          for cand in overlay/img/shop-logo-*.jpg overlay/img/logo.png overlay/img/logo.jpg; do
+            if [ -f "$cand" ]; then SRC="$cand"; break; fi
+          done
           if [ -n "${SRC:-}" ] && command -v convert >/dev/null 2>&1; then
             convert "$SRC" -resize 246x48 -background none -gravity center -extent 246x48 PNG32:mli-logo.png
             for t in prestashop@2x.png prestashop.png; do
