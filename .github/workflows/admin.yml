@@ -98,7 +98,16 @@ jobs:
         run: |
           set -euo pipefail
           PW="${ADMIN_PW:-}"
-          if [ -z "$PW" ]; then PW="$(openssl rand -base64 12)"; fi
+          if [ -z "$PW" ]; then
+            # A generated password is immediately masked, so it is *** in the
+            # log and NOBODY can log in with it. Say that plainly rather than
+            # handing over an admin URL that cannot be entered.
+            echo "::warning::ADMIN_PASSWORD is not set. A random password was generated and is masked in the log, so the admin CANNOT be logged into. Set the ADMIN_PASSWORD repo secret. (The rebuild/deploy half of this workflow is unaffected.)"
+            PW="$(openssl rand -base64 12)"
+            echo "ADMIN_LOGIN_POSSIBLE=no" >> "$GITHUB_ENV"
+          else
+            echo "ADMIN_LOGIN_POSSIBLE=yes" >> "$GITHUB_ENV"
+          fi
           echo "::add-mask::$PW"
           HASH=$(php -r 'echo password_hash($argv[1], PASSWORD_BCRYPT);' "$PW")
           {
@@ -336,7 +345,11 @@ jobs:
             echo "| Shop  | ${{ steps.tunnel.outputs.url }} |"
             echo "| Admin | ${{ steps.tunnel.outputs.url }}/$ADMIN_DIR |"
             echo "| User  | admin@mlicanada.com |"
-            echo "| Pass  | the ADMIN_PASSWORD secret, or the generated one in the log |"
+            if [ "${ADMIN_LOGIN_POSSIBLE:-no}" = "yes" ]; then
+              echo "| Pass  | the ADMIN_PASSWORD repo secret |"
+            else
+              echo "| Pass  | **NO LOGIN POSSIBLE** - ADMIN_PASSWORD is not set, so a random one was generated and masked. Set the secret and re-run. |"
+            fi
             echo "| Open for | ${{ inputs.minutes }} minutes |"
             echo ""
             echo "Customers and orders are deliberately absent: this copy holds the catalogue only."
