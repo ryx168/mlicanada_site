@@ -281,57 +281,36 @@ jobs:
           # against db/mlicanada_shop.sql.gz, not just one run) and it is
           # already public on the live site, so it ships in this repo.
           docker cp overlay-extra/MLI_files ps:/var/www/html/MLI_files
-          # An "End session" button inside the admin, including on the login
-          # page - where you land after PrestaShop logs you out, and where you
-          # most want to shut the runner down. mod_substitute rewrites the
-          # response body; scoped to the admin directory so the link can never
-          # be baked into the static export, which is crawled from this same
-          # container.
-          # The admin login page shows PrestaShop's own wordmark
-          # (img/prestashop@2x.png). Swap in the shop's logo - PS_LOGO is
-          # shop-logo-1622684571.jpg, which is actually a PNG despite the
-          # extension, with logo.jpg (a real JPEG, 100x28) as the fallback.
-          # Padded onto a 246x48 canvas because the template hardcodes
-          # width=123 height=24, so an odd aspect ratio would be stretched.
-          # Explicit preference, NOT `ls -S`. Sorting by byte size picks
-          # logo.jpg (2758 bytes, a 100x28 JPEG) over
-          # shop-logo-1622684571.jpg (2709 bytes, a 160x72 PNG) - the smaller
-          # file is the better image. PS_LOGO points at shop-logo-*, so prefer
-          # that, then logo.png, then logo.jpg.
-          SRC=""
-          for cand in overlay/img/shop-logo-*.jpg overlay/img/logo.png overlay/img/logo.jpg; do
-            if [ -f "$cand" ]; then SRC="$cand"; break; fi
-          done
-          if [ -n "${SRC:-}" ] && command -v convert >/dev/null 2>&1; then
-            convert "$SRC" -resize 246x48 -background none -gravity center -extent 246x48 PNG32:mli-logo.png
-            for t in prestashop@2x.png prestashop.png; do
-              docker cp mli-logo.png "ps:/var/www/html/img/$t" 2>/dev/null || true
-            done
-            docker exec ps sh -c 'chown www-data:www-data /var/www/html/img/prestashop*.png' || true
-            echo "admin logo replaced from $SRC ($(wc -c < mli-logo.png) bytes)"
-            docker exec ps sh -c 'ls -l /var/www/html/img/prestashop@2x.png'
-            rm -f mli-logo.png
-          elif [ -n "${SRC:-}" ] && [ "$(head -c4 "$SRC" | od -An -tx1 | tr -d ' ')" = "89504e47" ]; then
-            # No ImageMagick, but PS_LOGO (shop-logo-*.jpg) is ALREADY a PNG
-            # despite its extension, so it can be dropped in as-is. The
-            # template's fixed width/height will scale it.
-            for t in prestashop@2x.png prestashop.png; do
-              docker cp "$SRC" "ps:/var/www/html/img/$t" 2>/dev/null || true
-            done
-            docker exec ps sh -c 'chown www-data:www-data /var/www/html/img/prestashop*.png' || true
-            echo "admin logo copied verbatim from $SRC (already a PNG; no ImageMagick)"
-          else
-            echo "::warning::could not build the admin logo (src=${SRC:-none}, convert=$(command -v convert >/dev/null 2>&1 && echo yes || echo no)) - the PrestaShop wordmark stays"
-          fi
+          # A "Restart / end session" link inside the admin, the LOGIN page
+          # included - that page is where PrestaShop drops you after a logout
+          # or a failed sign-in, and the one place you cannot otherwise reach
+          # the launcher. Injected with mod_substitute into an .htaccess in the
+          # admin directory: a conf-enabled <Location> ran no filter at all,
+          # silently, whereas PrestaShop's own .htaccess rewrites work here, so
+          # AllowOverride is All and a directory .htaccess is reliable.
           A=$(docker exec ps sh -c 'ls -d /var/www/html/admin* 2>/dev/null | head -1' | xargs -r basename || echo admin)
-          sed -e "s|@@ADMIN_DIR@@|$A|g" -e "s|@@LAUNCHER@@|$LAUNCHER_LOGOUT_URL|g"  overlay-extra/admin-inject.conf.template > endsession.conf
-          docker cp endsession.conf ps:/etc/apache2/conf-enabled/zz-endsession.conf
-          rm -f endsession.conf
           if docker exec ps sh -c 'a2enmod substitute filter >/dev/null 2>&1'; then
-            echo "mod_substitute enabled; End session button injected into /$A"
+            sed "s|@@LAUNCHER@@|$LAUNCHER_LOGOUT_URL|g"  overlay-extra/admin-inject.htaccess.template > admin-inject.htaccess
+            # APPEND, never overwrite: PrestaShop may ship its own .htaccess in
+            # the admin directory (it has historically carried deny rules), and
+            # replacing it could quietly remove protections.
+            docker cp admin-inject.htaccess ps:/tmp/admin-inject.htaccess
+            rm -f admin-inject.htaccess
+            docker exec ps sh -c "ls -l /var/www/html/$A/.htaccess 2>/dev/null && echo 'existing .htaccess found - appending' || echo 'no existing .htaccess - creating'"
+            docker exec ps sh -c "touch /var/www/html/$A/.htaccess; cat /tmp/admin-inject.htaccess >> /var/www/html/$A/.htaccess; rm -f /tmp/admin-inject.htaccess; chown www-data:www-data /var/www/html/$A/.htaccess"
+            docker exec ps sh -c 'apache2ctl -k graceful 2>/dev/null || true'
+            sleep 4
+            # Verify from inside the runner rather than assuming. This is the
+            # check that caught the silent no-op in the first place.
+            if curl -s --max-time 20 "http://localhost/$A/" | grep -q mli-end-session; then
+              echo "Restart/end-session link injected into /$A"
+            else
+              echo "::warning::mod_substitute did not inject - no in-admin link (the launcher's ?logout still works)"
+              docker exec ps sh -c 'apache2ctl -M 2>/dev/null | grep -iE "substitute|filter"' || true
+              docker exec ps sh -c "head -3 /var/www/html/$A/.htaccess" || true
+            fi
           else
-            echo "::warning::mod_substitute is unavailable - no End session button in the admin (use the launcher's ?logout instead)"
-            docker exec ps sh -c 'rm -f /etc/apache2/conf-enabled/zz-endsession.conf' || true
+            echo "::warning::mod_substitute is unavailable in this image - no in-admin link"
           fi
           docker exec ps sh -c 'chown -R www-data:www-data /var/www/html; rm -rf /var/www/html/var/cache/*'
           docker exec ps sh -c 'a2enmod rewrite >/dev/null 2>&1 || true'

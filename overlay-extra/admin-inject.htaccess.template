@@ -1,0 +1,31 @@
+# Two injections into every admin page, the LOGIN page included.
+#
+# 1. A "Restart / end session" link - the login page is where you land after
+#    PrestaShop logs you out, and the one place you cannot otherwise get at the
+#    launcher. It opens the launcher panel, which offers both.
+# 2. The logo's alt text, which PrestaShop hardcodes to "PrestaShop". The image
+#    itself is replaced on disk by the workflow; this fixes the text that screen
+#    readers and a broken-image placeholder show.
+#
+# Done with mod_substitute rather than by editing PrestaShop's templates: the
+# admin theme's Twig/TPL layout differs between 1.7 point releases and the
+# image regenerates its own admin directory name every run, so patching
+# templates blind is how you get a silently broken admin.
+#
+# @@LAUNCHER@@ is substituted by the workflow.
+#
+# This is an .htaccess dropped INSIDE the admin directory, not a conf-enabled
+# <Location>. A server-level Location was not applying to the request at all -
+# no filter ran, with no error. PrestaShop's own .htaccess rewrites work in
+# this container, which proves AllowOverride is All, so a directory .htaccess
+# is both reliable and unambiguously scoped.
+#
+# Being in the admin directory is what scopes it. The shop front must NOT carry
+# this link: the export is crawled from this same container, so anything
+# injected site-wide would be baked into the published static pages.
+
+AddOutputFilterByType SUBSTITUTE text/html
+# The `n` flag is a plain (non-regex) match, so no HTML needs escaping.
+# One replacement only, at the end of the body.
+Substitute "s|</body>|<a href=\"@@LAUNCHER@@\" id=\"mli-end-session\" style=\"position:fixed;right:14px;bottom:14px;z-index:99999;background:#c0392b;color:#fff;font:600 13px/1 -apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:10px 14px;border-radius:8px;text-decoration:none;box-shadow:0 2px 8px rgba(0,0,0,.3)\">Restart / end session</a></body>|ni"
+Substitute "s|alt=\"PrestaShop\"|alt=\"MLI Canada\"|ni"
