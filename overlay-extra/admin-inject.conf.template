@@ -1,6 +1,10 @@
-# Injects an "End session" link into every admin page, including the LOGIN
-# page - which is the one that matters, because that is where you land after
-# PrestaShop logs you out and where you most want to shut the runner down.
+# Two injections into every admin page, the LOGIN page included.
+#
+# 1. An "End session" link - the login page is where you land after PrestaShop
+#    logs you out, and where you most want to shut the runner down.
+# 2. The logo's alt text, which PrestaShop hardcodes to "PrestaShop". The image
+#    itself is replaced on disk by the workflow; this fixes the text that screen
+#    readers and a broken-image placeholder show.
 #
 # Done with mod_substitute rather than by editing PrestaShop's templates: the
 # admin theme's Twig/TPL layout differs between 1.7 point releases and the
@@ -18,4 +22,5 @@
     # The `n` flag is a plain (non-regex) match, so no HTML needs escaping.
     # One replacement only, at the end of the body.
     Substitute "s|</body>|<a href=\"@@LAUNCHER@@\" id=\"mli-end-session\" style=\"position:fixed;right:14px;bottom:14px;z-index:99999;background:#c0392b;color:#fff;font:600 13px/1 -apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:10px 14px;border-radius:8px;text-decoration:none;box-shadow:0 2px 8px rgba(0,0,0,.3)\">End session</a></body>|ni"
+    Substitute "s|alt=\"PrestaShop\"|alt=\"MLI Canada\"|ni"
 </Location>
