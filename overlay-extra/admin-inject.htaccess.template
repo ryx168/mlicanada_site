@@ -9,6 +9,14 @@
 # 3. A cache-buster on the logo URL, because replacing the bytes behind an
 #    unchanged URL leaves every browser that has already loaded the page showing
 #    the old wordmark.
+# 4. A CSS override for the ADMIN HEADER logo - the one top-left once you are
+#    logged in. That is not an <img> at all but a CSS background on
+#    <a id="header_logo" class="logo">, pointing at a CONTENT-HASHED file
+#    (.logo{background:url(fbc2a379fdad6d5a1b10c881644bc5dd.png)}). Overriding
+#    the background in CSS points it at the logo already swapped in at
+#    /img/prestashop@2x.png, so nothing depends on that hash staying the same
+#    between PrestaShop builds. background-size:contain because the MLI logo is
+#    160x72 and the header strip is shorter, so natural size would crop it.
 #
 # Done with mod_substitute rather than by editing PrestaShop's templates: the
 # admin theme's Twig/TPL layout differs between 1.7 point releases and the
@@ -30,7 +38,7 @@
 AddOutputFilterByType SUBSTITUTE text/html
 # The `n` flag is a plain (non-regex) match, so no HTML needs escaping.
 # One replacement only, at the end of the body.
-Substitute "s|</body>|<a href=\"@@LAUNCHER@@\" id=\"mli-end-session\" style=\"position:fixed;right:14px;bottom:14px;z-index:99999;background:#c0392b;color:#fff;font:600 13px/1 -apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:10px 14px;border-radius:8px;text-decoration:none;box-shadow:0 2px 8px rgba(0,0,0,.3)\">Restart / end session</a></body>|ni"
+Substitute "s|</body>|<style>#header_logo,.logo{background-image:url(/img/prestashop@2x.png?mli=1) !important;background-size:contain !important;background-position:left center !important;background-repeat:no-repeat !important}</style><a href=\"@@LAUNCHER@@\" id=\"mli-end-session\" style=\"position:fixed;right:14px;bottom:14px;z-index:99999;background:#c0392b;color:#fff;font:600 13px/1 -apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:10px 14px;border-radius:8px;text-decoration:none;box-shadow:0 2px 8px rgba(0,0,0,.3)\">Restart / end session</a></body>|ni"
 Substitute "s|alt=\"PrestaShop\"|alt=\"MLI Canada\"|ni"
 # Cache-bust the logo. The file on disk is replaced but the URL is not, so a
 # browser that has already seen /img/prestashop@2x.png keeps showing the old
