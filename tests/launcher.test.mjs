@@ -163,6 +163,22 @@ body = await r.text();
 check('close with no session says so', body.includes('Nothing to close'));
 check('close with no session cancelled nothing', !calls.some(c => c.includes('/cancel')), calls.join(' | '));
 
+// 11b. A GitHub outage must be a readable page, never a Worker exception.
+//      Cloudflare turns an uncaught throw into "Error 1101: Worker threw
+//      exception", which is what the owner saw.
+globalThis.fetch = async () => { throw new TypeError('network error'); };
+calls = [];
+r = await launcherGet({ request: getReq(), env: { GH_TOKEN: 't' } });
+body = await r.text();
+check('GitHub unreachable on GET -> 503 page, not a throw', r.status === 503, 'status=' + r.status);
+check('the page says what went wrong', body.includes('Cannot reach GitHub'));
+check('it does NOT offer to start one (would risk a second runner)',
+      !body.includes('class="sp"'), body.slice(0, 120));
+
+globalThis.fetch = async () => { throw new TypeError('network error'); };
+r = await launcherPost({ request: req(BROWSER), env: { GH_TOKEN: 't' } });
+check('GitHub unreachable on POST -> 503 page, not a throw', r.status === 503, 'status=' + r.status);
+
 // 12. Fails closed with no token, and never indexable.
 r = await launcherGet({ env: {} });
 check('no GH_TOKEN -> 503', r.status === 503, 'status=' + r.status);

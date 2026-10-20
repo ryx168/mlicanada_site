@@ -152,7 +152,36 @@ function startingPage(alreadyRunning) {
     + '</script>');
 }
 
-export async function launcherGet({ request, env }) {
+// Cloudflare answers an uncaught exception with "Error 1101: Worker threw
+// exception", which tells the owner nothing and looks like the site is broken.
+// Every path here depends on api.github.com, so a transient network failure
+// there must become a readable page, not a 1101. Deliberately NOT treated as
+// "no session running": that would offer to start one, and could leave a
+// second runner going while the first is still alive.
+function unreachable(what) {
+  return page('<h1>Cannot reach GitHub</h1>'
+    + '<p>The launcher could not ' + what + '. This is usually brief -'
+    + ' reload in a few seconds.</p>'
+    + '<p><small>Any session already running is unaffected.</small></p>', 503);
+}
+
+export async function launcherGet(context) {
+  try {
+    return await launcherGetInner(context);
+  } catch (e) {
+    return unreachable('check whether a session is running');
+  }
+}
+
+export async function launcherPost(context) {
+  try {
+    return await launcherPostInner(context);
+  } catch (e) {
+    return unreachable('reach the workflow');
+  }
+}
+
+async function launcherGetInner({ request, env }) {
   if (!env.GH_TOKEN) {
     return page('<h1>Not configured</h1><p>This launcher needs a <code>GH_TOKEN</code>'
       + ' secret on the Pages project - a fine-grained token with Actions read/write'
@@ -202,7 +231,7 @@ export async function launcherGet({ request, env }) {
   return startingPage(run.state === 'starting');
 }
 
-export async function launcherPost({ request, env }) {
+async function launcherPostInner({ request, env }) {
   if (!env.GH_TOKEN) return page('<h1>Not configured</h1>', 503);
 
   // Read the intent without trusting content-type. A browser form sends
