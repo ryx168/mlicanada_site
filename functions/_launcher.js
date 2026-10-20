@@ -48,6 +48,13 @@ const H = {
   'x-robots-tag': 'noindex, nofollow',
 };
 
+// Every call carries a timeout. Without one a hung connection to
+// api.github.com runs until the runtime kills the request, and THAT is the
+// one failure a try/catch cannot turn into a page - Cloudflare renders it as
+// "Error 1101: Worker threw exception". With a signal the hang becomes an
+// AbortError, which the handlers catch and report properly.
+const GH_TIMEOUT_MS = 6000;
+
 function gh(env, path, init) {
   init = init || {};
   const headers = Object.assign({
@@ -55,8 +62,9 @@ function gh(env, path, init) {
     authorization: 'Bearer ' + env.GH_TOKEN,
     'user-agent': 'mlicanada-admin-launcher',
   }, init.headers || {});
-  return fetch('https://api.github.com/repos/' + OWNER + '/' + REPO + path,
-               Object.assign({}, init, { headers: headers }));
+  const opts = Object.assign({ signal: AbortSignal.timeout(GH_TIMEOUT_MS) },
+                             init, { headers: headers });
+  return fetch('https://api.github.com/repos/' + OWNER + '/' + REPO + path, opts);
 }
 
 // The live session's address is published by the workflow onto a side branch,
@@ -198,7 +206,9 @@ async function launcherGetInner({ request, env }) {
     manage = q.has('manage') || q.has('close') || q.has('logout');
   } catch (e) { /* no URL on a bare mock: treat as a plain visit */ }
 
-  const live = await liveSession(env);
+  // Fetched together, not in series: they are independent, and halving the
+  // round trips halves the window in which the request can be killed.
+  const [live, run] = await Promise.all([liveSession(env), currentRun(env)]);
   if (live && !manage) {
     return new Response(null, {
       status: 302,
@@ -227,7 +237,6 @@ async function launcherGetInner({ request, env }) {
 
   // No session. Show the spinner and let its script start one - a GET must
   // never dispatch. If a run is already on its way, just wait for it.
-  const run = await currentRun(env);
   return startingPage(run.state === 'starting');
 }
 

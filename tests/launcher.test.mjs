@@ -179,6 +179,32 @@ globalThis.fetch = async () => { throw new TypeError('network error'); };
 r = await launcherPost({ request: req(BROWSER), env: { GH_TOKEN: 't' } });
 check('GitHub unreachable on POST -> 503 page, not a throw', r.status === 503, 'status=' + r.status);
 
+// 11c. A HUNG GitHub must become a page too. This is the case that produced
+//      the 1101: with no timeout the fetch never settles, the runtime kills
+//      the request, and no try/catch can intervene. AbortSignal.timeout turns
+//      it into an AbortError the handler can catch.
+//
+//      Simulated by rejecting, not by waiting: Node's AbortSignal.timeout uses
+//      an UNREF'd timer, so a test that actually waits for it never settles -
+//      the process exits first and the assertion silently never runs.
+globalThis.fetch = async (url, init = {}) => {
+  if (!init.signal) throw new Error('gh() called with no abort signal');
+  throw new DOMException('The operation was aborted', 'AbortError');
+};
+r = await launcherGet({ request: getReq(), env: { GH_TOKEN: 't' } });
+check('a timed-out GitHub becomes a 503 page, not a killed Worker', r.status === 503, 'status=' + r.status);
+r = await launcherPost({ request: req(BROWSER), env: { GH_TOKEN: 't' } });
+check('same on POST', r.status === 503, 'status=' + r.status);
+
+// And prove the signal is actually passed - that IS the fix.
+let sawSignal = null;
+globalThis.fetch = async (url, init = {}) => {
+  sawSignal = !!(init && init.signal);
+  return { ok: false, text: async () => '', json: async () => ({ workflow_runs: [] }) };
+};
+await launcherGet({ request: getReq(), env: { GH_TOKEN: 't' } });
+check('every GitHub call carries an abort signal', sawSignal === true, 'sawSignal=' + sawSignal);
+
 // 12. Fails closed with no token, and never indexable.
 r = await launcherGet({ env: {} });
 check('no GH_TOKEN -> 503', r.status === 503, 'status=' + r.status);
