@@ -37,11 +37,19 @@ export async function categoryPage(env, iso, categoryId, page) {
     `SELECT COUNT(*) AS n FROM category_product cp
        JOIN products p ON p.id_product = cp.id_product AND p.active = 1
       WHERE cp.id_category = ?`).bind(categoryId).first('n');
+  // Ordered by NAME, not cp.position, and that matters: page 1 of a category
+  // is a CRAWLED PrestaShop page, and this shop sorts its listings
+  // alphabetically - only ?page=2 and beyond are served from here. Ordering by
+  // position made the two halves of one category disagree. Category 194: the
+  // crawled page 1 ended with 5" Tart Shell, while page 2 from this query
+  // (positions 12-13) repeated that same product and dropped Oval Foil Pie
+  // Shell from the site entirely. id_product is a unique final tiebreaker, so
+  // the LIMIT/OFFSET window is deterministic.
   const rows = await env.DB.prepare(
     `${SELECT} ${FROM}
        JOIN category_product cp ON cp.id_product = p.id_product AND cp.id_category = ?
       WHERE p.active = 1
-      ORDER BY cp.position, l.name
+      ORDER BY l.name, p.id_product
       LIMIT ? OFFSET ?`).bind(iso, iso, categoryId, PER_PAGE, off).all();
   return { total: total || 0, rows: rows.results || [] };
 }
@@ -73,7 +81,7 @@ export async function searchPage(env, iso, terms, page, opts = {}) {
     `${SELECT} ${FROM}
        JOIN product_search s ON s.id_product = p.id_product AND s.iso = ?${catJoin}
       WHERE s.active = 1 AND ${hay}
-      ORDER BY CASE WHEN ${ttl} THEN 0 ELSE 1 END, l.name
+      ORDER BY CASE WHEN ${ttl} THEN 0 ELSE 1 END, l.name, p.id_product
       LIMIT ? OFFSET ?`)
     .bind(iso, iso, iso, ...(cat ? [cat] : []), ...like, ...like, limit, off).all();
   return { total: total || 0, rows: rows.results || [] };

@@ -105,30 +105,23 @@ cp scripts/_redirects "$OUT/_redirects"
 npx --yes wrangler@4 pages deploy "$OUT" --project-name "$PROJECT" --branch main \
   || { echo "::error::pages deploy failed"; exit 1; }
 
-echo "== prove the FUNCTIONS deployed, not just the static pages =="
-# Search and category pagination are served by Pages Functions reading D1, not
-# by files on disk. A deploy that lost functions/ would still sail through the
-# reference check above - every page and asset present - while /en/search and
-# every ?page=2 went 404. So probe the Function routes directly.
-fn_fail=0
-sc=$(curl -s -o /dev/null -w '%{http_code}' "https://$PROJECT.pages.dev/en/search?q=a" || true)
-echo "   /en/search?q=a -> $sc"
-[ "$sc" = "200" ] || { echo "::error::/en/search is not served - the Pages Functions did not deploy"; fn_fail=1; }
-cat_path=$(grep -oE "^http://$HOST/en/[0-9]+-[a-z0-9-]+$" pages.txt | head -1 | sed "s|http://$HOST||" || true)
-if [ -n "$cat_path" ]; then
-  pg=$(curl -s -o /dev/null -w '%{http_code}' "https://$PROJECT.pages.dev$cat_path?page=2" || true)
-  echo "   $cat_path?page=2 -> $pg"
-  [ "$pg" = "200" ] || { echo "::error::category pagination is not served"; fn_fail=1; }
-else
-  echo "::error::no category URL found in pages.txt to test pagination with"
-  fn_fail=1
-fi
-# Control: a category id that cannot exist must NOT come back 200, or neither
-# check above discriminates between a working site and a fallback page.
-ctl=$(curl -s -o /dev/null -w '%{http_code}' "https://$PROJECT.pages.dev/en/999999-not-a-real-category" || true)
-echo "   control /en/999999-not-a-real-category -> $ctl"
-[ "$ctl" != "200" ] || { echo "::error::a nonexistent category returned 200 - these checks cannot discriminate"; fn_fail=1; }
-[ "$fn_fail" = "0" ] || { echo "::error::Function routes are broken on the deployment"; exit 1; }
+echo "== verify the deployment =="
+# A multi-page category, chosen from the database rather than hardcoded, so
+# the page-1/page-2 seam is actually exercised. PER_PAGE is 12.
+multi=$($MYSQL "$DB" -N -B -e "
+  SELECT CONCAT('/', l.iso_code, '/', c.id_category, '-', cl.link_rewrite)
+  FROM ps_category c
+  JOIN ps_category_lang cl ON cl.id_category=c.id_category
+  JOIN ps_lang l ON l.id_lang=cl.id_lang AND l.iso_code='en'
+  JOIN (SELECT cp.id_category, COUNT(*) n FROM ps_category_product cp
+        JOIN ps_product p ON p.id_product=cp.id_product AND p.active=1
+        GROUP BY cp.id_category HAVING n > 12) x ON x.id_category=c.id_category
+  WHERE c.active=1 AND c.id_category>1
+  ORDER BY x.n DESC LIMIT 1" 2>/dev/null | head -1)
+echo "   seam check will use: ${multi:-<NONE FOUND>}"
+[ -n "${multi:-}" ] || { echo "::error::found no category with more than 12 products, so the page seam cannot be checked"; exit 1; }
+bash scripts/verify-deployment.sh "$PROJECT" "$multi" \
+  || { echo "::error::the deployment failed verification"; exit 1; }
 
 echo "== verify what we just published =="
 (cd "$OUT" && find . -name '*.html' | sed 's|^\./||') > deployed-files.txt
