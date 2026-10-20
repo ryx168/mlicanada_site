@@ -1,0 +1,21 @@
+# Injects an "End session" link into every admin page, including the LOGIN
+# page - which is the one that matters, because that is where you land after
+# PrestaShop logs you out and where you most want to shut the runner down.
+#
+# Done with mod_substitute rather than by editing PrestaShop's templates: the
+# admin theme's Twig/TPL layout differs between 1.7 point releases and the
+# image regenerates its own admin directory name every run, so patching
+# templates blind is how you get a silently broken admin.
+#
+# @@ADMIN_DIR@@ and @@LAUNCHER@@ are substituted by the workflow.
+#
+# Scoped to the admin directory on purpose. The shop front must NOT carry this
+# link - the export is crawled from this same container, so anything injected
+# site-wide would be baked into the published static pages.
+
+<Location "/@@ADMIN_DIR@@">
+    AddOutputFilterByType SUBSTITUTE text/html
+    # The `n` flag is a plain (non-regex) match, so no HTML needs escaping.
+    # One replacement only, at the end of the body.
+    Substitute "s|</body>|<a href=\"@@LAUNCHER@@\" id=\"mli-end-session\" style=\"position:fixed;right:14px;bottom:14px;z-index:99999;background:#c0392b;color:#fff;font:600 13px/1 -apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:10px 14px;border-radius:8px;text-decoration:none;box-shadow:0 2px 8px rgba(0,0,0,.3)\">End session</a></body>|ni"
+</Location>

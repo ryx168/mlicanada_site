@@ -19,6 +19,11 @@ on:
 permissions:
   contents: write
 
+# Where the injected "End session" link points. One constant to change when
+# DNS moves the site onto its own domain.
+env:
+  LAUNCHER_LOGOUT_URL: https://mlicanada-holding.pages.dev/admin168we3cgm/?logout
+
 # Two sessions must never run at once: both dump the catalogue back to
 # db/mlicanada_shop.sql.gz and both write the session branch, so a race
 # loses one session's edits silently. Queue instead of cancelling - a
@@ -253,6 +258,22 @@ jobs:
           # against db/mlicanada_shop.sql.gz, not just one run) and it is
           # already public on the live site, so it ships in this repo.
           docker cp overlay-extra/MLI_files ps:/var/www/html/MLI_files
+          # An "End session" button inside the admin, including on the login
+          # page - where you land after PrestaShop logs you out, and where you
+          # most want to shut the runner down. mod_substitute rewrites the
+          # response body; scoped to the admin directory so the link can never
+          # be baked into the static export, which is crawled from this same
+          # container.
+          A=$(docker exec ps sh -c 'ls -d /var/www/html/admin* 2>/dev/null | head -1' | xargs -r basename || echo admin)
+          sed -e "s|@@ADMIN_DIR@@|$A|g" -e "s|@@LAUNCHER@@|$LAUNCHER_LOGOUT_URL|g"  overlay-extra/endsession.conf.template > endsession.conf
+          docker cp endsession.conf ps:/etc/apache2/conf-enabled/zz-endsession.conf
+          rm -f endsession.conf
+          if docker exec ps sh -c 'a2enmod substitute filter >/dev/null 2>&1'; then
+            echo "mod_substitute enabled; End session button injected into /$A"
+          else
+            echo "::warning::mod_substitute is unavailable - no End session button in the admin (use the launcher's ?logout instead)"
+            docker exec ps sh -c 'rm -f /etc/apache2/conf-enabled/zz-endsession.conf' || true
+          fi
           docker exec ps sh -c 'chown -R www-data:www-data /var/www/html; rm -rf /var/www/html/var/cache/*'
           docker exec ps sh -c 'a2enmod rewrite >/dev/null 2>&1 || true'
           # Listen on 80 AND 8080, not 8080 alone. The tunnel points at 8080,
@@ -343,6 +364,21 @@ jobs:
           else
             echo "::error::no product image referenced on the home page at all"
             fail=1
+          fi
+          # The injected "End session" link must be ON the admin and NOT on the
+          # shop front. The control is the important half: the static export is
+          # crawled from this very container, so a site-wide injection would be
+          # baked into every published page.
+          if grep -q 'mli-end-session' /tmp/admin.html; then
+            echo "     End session button on the admin: yes"
+          else
+            echo "::warning::no End session button on the admin page - mod_substitute may be unavailable in this image"
+          fi
+          if grep -q 'mli-end-session' /tmp/home.html; then
+            echo "::error::the End session link is on the SHOP FRONT - it would be baked into the static export"
+            fail=1
+          else
+            echo "     shop front is clean of it: yes"
           fi
           # control: a path that cannot exist must not look like a working page
           ctl=$(curl -s -o /tmp/ctl.html -w '%{http_code}' "$URL/en/DEFINITELY-NOT-REAL-12345" || true)
