@@ -337,6 +337,12 @@ jobs:
       - name: Where to go
         run: |
           ADMIN_DIR=$(docker exec ps sh -c 'ls -d /var/www/html/admin* 2>/dev/null | head -1' | xargs -r basename || echo admin)
+          # Also emit the URLs as a NOTICE. The step summary below is rendered
+          # by JavaScript, so it is readable only in a browser - not in the
+          # logs, not via the REST API, and not by any fetch. An annotation is
+          # visible in `gh run view` while the session is still open, which is
+          # the only moment it is useful.
+          echo "::notice title=Admin session::shop ${{ steps.tunnel.outputs.url }}/en/  |  admin ${{ steps.tunnel.outputs.url }}/$ADMIN_DIR/  |  user admin@mlicanada.com"
           {
             echo "## mlicanada admin is open"
             echo ""
