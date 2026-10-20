@@ -206,6 +206,14 @@ jobs:
           # routes /en/... to index.php AND maps the virtual image paths
           # (/26-home_default/x.jpg -> img/p/2/6/...) the catalogue depends on.
           docker cp overlay-extra/htaccess ps:/var/www/html/.htaccess
+          # The about-us CMS page (en and qc) references
+          # /MLI_files/customdesign5.jpg - a leftover from the pre-PrestaShop
+          # site that sits in the web root, not under img/ or themes/, so the
+          # R2 overlay does not carry it and the rebuild could never fetch it.
+          # It is the ONLY MLI_files reference in the whole catalogue (checked
+          # against db/mlicanada_shop.sql.gz, not just one run) and it is
+          # already public on the live site, so it ships in this repo.
+          docker cp overlay-extra/MLI_files ps:/var/www/html/MLI_files
           docker exec ps sh -c 'chown -R www-data:www-data /var/www/html; rm -rf /var/www/html/var/cache/*'
           docker exec ps sh -c 'a2enmod rewrite >/dev/null 2>&1 || true'
           # Listen on 80 AND 8080, not 8080 alone. The tunnel points at 8080,
