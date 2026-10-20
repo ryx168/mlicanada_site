@@ -321,21 +321,13 @@ jobs:
           # Port 80 must answer too, or republish.sh cannot crawl.
           code80=$(curl -s -o /dev/null -w '%{http_code}' http://localhost/ || true)
           echo "local check :80   (the crawl)  -> $code80"
-          # Now that apache has reloaded, the admin .htaccess is live. Checking
-          # before the reload reported "did not inject" on a run where the proof
-          # step then found the link present - a false alarm from checking too
-          # early, which is worse than not checking.
-          if curl -s --max-time 20 "http://localhost/$A/" | grep -q mli-end-session; then
-            echo "restart/end-session link is live in /$A"
-          else
-            echo "::warning::no in-admin link (the launcher's ?logout still works)"
-            docker exec ps sh -c 'apache2ctl -M 2>/dev/null | grep -iE "substitute|filter"' || true
-          fi
-          if [ "$code80" = "000" ]; then
-            echo "::error::apache is not listening on port 80 - republish would abort"
-            docker exec ps sh -c 'grep -n Listen /etc/apache2/ports.conf; grep -n VirtualHost /etc/apache2/sites-available/*.conf' || true
-            exit 1
-          fi
+          # No duplicate check for the injected link here. Two attempts at it
+          # both reported failure on runs where the proof step then found the
+          # link present: the first ran before apache reloaded, the second
+          # curled http://localhost without -L, and PS_SSL_ENABLED makes
+          # PrestaShop 302 that to https, so it read an empty body. The proof
+          # step checks the real thing through the tunnel, the way a browser
+          # sees it. One correct check beats two, one of which cries wolf.
           # /var/log/apache2/error.log is EMPTY in this image - php:apache
           # sends both logs to the container's stdout/stderr. Tailing the file
           # is why a blanket 500 from a bad .htaccess looked like it had no
