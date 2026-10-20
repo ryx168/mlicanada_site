@@ -22,7 +22,7 @@ permissions:
 # Where the injected "End session" link points. One constant to change when
 # DNS moves the site onto its own domain.
 env:
-  LAUNCHER_LOGOUT_URL: https://mlicanada-holding.pages.dev/admin168we3cgm/?logout
+  LAUNCHER_LOGOUT_URL: https://mlicanada.com/admin168we3cgm/?logout
 
 # Two sessions must never run at once: both dump the catalogue back to
 # db/mlicanada_shop.sql.gz and both write the session branch, so a race
