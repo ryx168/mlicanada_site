@@ -7,8 +7,12 @@ name: Pages custom domains
 # DNS first would take the site down until the domain was added.
 #
 # It lives in a workflow because the only token with Pages:Edit for this
-# account is the CLOUDFLARE_API_TOKEN repo secret - the local DNS token
-# returns "Authentication error" against the Pages API.
+# account is the CLOUDFLARE_API_TOKEN repo secret - the local DNS token,
+# which can edit the zone, returns "Authentication error" against the Pages
+# API.
+#
+# jq, not an embedded python heredoc: multi-line python inside a YAML block
+# scalar has to sit at column 0 to run, and column 0 ends the block scalar.
 
 on:
   workflow_dispatch:
@@ -40,33 +44,26 @@ jobs:
             exit 1
           fi
           API="https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/pages/projects/$PROJECT/domains"
+          AUTH="Authorization: Bearer $CF_TOKEN"
 
           echo "== domains already on $PROJECT =="
-          curl -s -H "Authorization: Bearer $CF_TOKEN" "$API" \
-            | python3 -c 'import sys,json;d=json.load(sys.stdin);[print("  ",x.get("name"),x.get("status")) for x in (d.get("result") or [])] or print("   (none)")'
+          curl -s -H "$AUTH" "$API" | jq -r '(.result // []) | if length == 0 then "   (none)" else .[] | "   \(.name)  \(.status)" end'
 
           echo
           echo "== adding $DOMAIN =="
-          OUT=$(curl -s -X POST -H "Authorization: Bearer $CF_TOKEN" \
-                 -H 'content-type: application/json' \
-                 --data "{\"name\":\"$DOMAIN\"}" "$API")
-          echo "$OUT" | python3 -c '
-import sys, json
-d = json.load(sys.stdin)
-if d.get("success"):
-    r = d.get("result") or {}
-    print("   added:", r.get("name"), "status:", r.get("status"))
-else:
-    msgs = [e.get("message","") for e in d.get("errors", [])]
-    # Already-present is not a failure: this workflow is safe to re-run.
-    if any("already" in m.lower() or "exist" in m.lower() for m in msgs):
-        print("   already present:", msgs)
-    else:
-        print("::error::could not add the domain:", msgs)
-        raise SystemExit(1)
-'
+          OUT=$(curl -s -X POST -H "$AUTH" -H 'content-type: application/json' --data "{\"name\":\"$DOMAIN\"}" "$API")
+          OK=$(echo "$OUT" | jq -r '.success')
+          if [ "$OK" = "true" ]; then
+            echo "   added: $(echo "$OUT" | jq -r '.result.name')  status: $(echo "$OUT" | jq -r '.result.status')"
+          else
+            MSG=$(echo "$OUT" | jq -r '[.errors[]?.message] | join("; ")')
+            # Already-present is not a failure: this workflow is safe to re-run.
+            case "$MSG" in
+              *already*|*Already*|*exist*|*Exist*) echo "   already present: $MSG" ;;
+              *) echo "::error::could not add $DOMAIN: $MSG"; exit 1 ;;
+            esac
+          fi
 
           echo
           echo "== domains now =="
-          curl -s -H "Authorization: Bearer $CF_TOKEN" "$API" \
-            | python3 -c 'import sys,json;d=json.load(sys.stdin);[print("  ",x.get("name"),x.get("status")) for x in (d.get("result") or [])]'
+          curl -s -H "$AUTH" "$API" | jq -r '(.result // [])[] | "   \(.name)  \(.status)"'
