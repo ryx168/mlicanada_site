@@ -6,7 +6,13 @@ non-WordPress export - it passed a deliberately broken reference on this
 PrestaShop tree. Here any same-host reference with a file extension is checked,
 and page links are checked against the .html / index.html layouts Pages serves.
 
+A reference may also be satisfied by a _redirects rule rather than a file:
+`/`, `/2-products` and the account paths are served that way on Pages, and
+they are referenced by every page in the export. Pass --redirects to count
+those as present; without it the check refuses a site that works.
+
 Usage: check-refs.py EXPORT_DIR HOST [--list] [--known known.txt]
+                     [--redirects _redirects]
 """
 import os, posixpath, re, sys, urllib.parse
 
@@ -22,6 +28,27 @@ known = set()
 if '--known' in sys.argv:
     kf = sys.argv[sys.argv.index('--known') + 1]
     known = set(l.strip() for l in open(kf) if l.strip())
+
+# Paths served by a _redirects rule instead of a file. Exact sources, plus
+# any `/prefix/*` splats, which Pages matches by prefix.
+redirect_exact, redirect_splat = set(), []
+if '--redirects' in sys.argv:
+    rf = sys.argv[sys.argv.index('--redirects') + 1]
+    for line in open(rf, encoding='utf-8'):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        src = line.split()[0].split('?')[0]
+        if src.endswith('/*'):
+            redirect_splat.append(src[:-1])
+        else:
+            redirect_exact.add(src)
+
+
+def redirected(path):
+    if path in redirect_exact:
+        return True
+    return any(path.startswith(pre) for pre in redirect_splat)
 
 
 def site_path(page_dir, url):
@@ -75,7 +102,7 @@ for root, _d, files in os.walk(out):
                     mangled.setdefault(rel_page, []).append(u)
                     missing_paths.add(path)
                     continue
-                if exists(path) or path in known:
+                if exists(path) or path in known or redirected(path):
                     continue
                 target = bad_assets if is_asset else bad_pages
                 target.setdefault(rel_page, []).append(u)
@@ -88,6 +115,8 @@ if LIST_ONLY:
 
 print('  checked %d asset refs + %d page refs across the export' % (checked['asset'], checked['page']))
 print('  known-broken allowance: %d paths' % len(known))
+print('  _redirects allowance: %d exact + %d splat'
+      % (len(redirect_exact), len(redirect_splat)))
 fail = False
 for label, d in (('ASSET', bad_assets), ('PAGE', bad_pages), ('QUERY-MANGLED (%3F)', mangled)):
     n = sum(len(v) for v in d.values())

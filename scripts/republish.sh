@@ -81,7 +81,10 @@ OUT="$OUT" HOSTNAME_="$HOST" bash scripts/crawl.sh "$OUT" "$HOST" pages.txt
 
 echo "== normalise, then refuse to publish a broken export =="
 python3 scripts/normalise.py "$OUT" "$HOST"
-python3 scripts/check-refs.py "$OUT" "$HOST" --known scripts/known-broken.txt || {
+# --redirects: `/`, `/2-products` and the account paths are referenced by every
+# page and are served by a _redirects rule, not a file. Without this the guard
+# refuses a site that works - 6117 "missing" page refs across all 679 pages.
+python3 scripts/check-refs.py "$OUT" "$HOST" --known scripts/known-broken.txt         --redirects scripts/_redirects || {
   echo "::error::export failed its reference check - NOT deploying"; exit 1; }
 
 echo "== rebuild the D1 catalogue =="

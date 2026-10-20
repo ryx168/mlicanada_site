@@ -54,7 +54,10 @@ echo "   phase 1: $(wc -l < "$PAGES") pages"
 fetch "$PAGES" -E
 
 echo "   phase 2: page-link closure"
-for pass in 1 2 3 4; do
+# Up to 8 passes, not 4: each pass finds pages linked only from pages fetched
+# in the previous one. The no-progress check below stops it early, so a higher
+# cap costs nothing and a low one silently truncates the export.
+for pass in 1 2 3 4 5 6 7 8; do
   python3 scripts/pages.py "$OUT" "$HOST" linked.txt >/dev/null
   : > todo.txt
   while read -r u; do
@@ -79,7 +82,10 @@ for pass in 1 2 3 4; do
 done
 
 echo "   phase 3: assets"
-for pass in 1 2 3; do
+# This ran out at 3 passes while still converging - 1020 missing, then 83,
+# then 48 - and left 48 assets unfetched, including /MLI_files/customdesign5.jpg
+# which returns 200 on the origin. It was never broken; the loop just stopped.
+for pass in 1 2 3 4 5 6 7 8; do
   python3 scripts/extract.py "$OUT" "$HOST" assets.txt >/dev/null 2>&1
   : > atodo.txt
   while read -r u; do
