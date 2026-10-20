@@ -298,17 +298,7 @@ jobs:
             rm -f admin-inject.htaccess
             docker exec ps sh -c "ls -l /var/www/html/$A/.htaccess 2>/dev/null && echo 'existing .htaccess found - appending' || echo 'no existing .htaccess - creating'"
             docker exec ps sh -c "touch /var/www/html/$A/.htaccess; cat /tmp/admin-inject.htaccess >> /var/www/html/$A/.htaccess; rm -f /tmp/admin-inject.htaccess; chown www-data:www-data /var/www/html/$A/.htaccess"
-            docker exec ps sh -c 'apache2ctl -k graceful 2>/dev/null || true'
-            sleep 4
-            # Verify from inside the runner rather than assuming. This is the
-            # check that caught the silent no-op in the first place.
-            if curl -s --max-time 20 "http://localhost/$A/" | grep -q mli-end-session; then
-              echo "Restart/end-session link injected into /$A"
-            else
-              echo "::warning::mod_substitute did not inject - no in-admin link (the launcher's ?logout still works)"
-              docker exec ps sh -c 'apache2ctl -M 2>/dev/null | grep -iE "substitute|filter"' || true
-              docker exec ps sh -c "head -3 /var/www/html/$A/.htaccess" || true
-            fi
+            echo "admin .htaccess written for /$A; it takes effect on the apache reload below"
           else
             echo "::warning::mod_substitute is unavailable in this image - no in-admin link"
           fi
@@ -331,6 +321,16 @@ jobs:
           # Port 80 must answer too, or republish.sh cannot crawl.
           code80=$(curl -s -o /dev/null -w '%{http_code}' http://localhost/ || true)
           echo "local check :80   (the crawl)  -> $code80"
+          # Now that apache has reloaded, the admin .htaccess is live. Checking
+          # before the reload reported "did not inject" on a run where the proof
+          # step then found the link present - a false alarm from checking too
+          # early, which is worse than not checking.
+          if curl -s --max-time 20 "http://localhost/$A/" | grep -q mli-end-session; then
+            echo "restart/end-session link is live in /$A"
+          else
+            echo "::warning::no in-admin link (the launcher's ?logout still works)"
+            docker exec ps sh -c 'apache2ctl -M 2>/dev/null | grep -iE "substitute|filter"' || true
+          fi
           if [ "$code80" = "000" ]; then
             echo "::error::apache is not listening on port 80 - republish would abort"
             docker exec ps sh -c 'grep -n Listen /etc/apache2/ports.conf; grep -n VirtualHost /etc/apache2/sites-available/*.conf' || true
