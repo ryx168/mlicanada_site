@@ -125,7 +125,18 @@ jobs:
           ADMIN_PW: ${{ secrets.ADMIN_PASSWORD }}
         run: |
           set -euo pipefail
-          PW="${ADMIN_PW:-}"
+          # Trim surrounding whitespace. A secret pasted into the web UI very
+          # easily carries a trailing newline or space, and then the hash is of
+          # the password with a newline on the end while the human types it
+          # without. PrestaShop then says "The employee does not exist, or the
+          # password provided is incorrect" - which is indistinguishable from a
+          # wrong address. sed, not parameter expansion, so a password
+          # containing spaces survives.
+          RAW="${ADMIN_PW:-}"
+          PW=$(printf '%s' "$RAW" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+          if [ -n "$RAW" ] && [ "$PW" != "$RAW" ]; then
+            echo "::warning::ADMIN_PASSWORD had surrounding whitespace - trimmed. Re-set the secret without it."
+          fi
           if [ -z "$PW" ]; then
             # A generated password is immediately masked, so it is *** in the
             # log and NOBODY can log in with it. Say that plainly rather than
@@ -160,6 +171,18 @@ jobs:
           } > seed.sql
           mysql -h 127.0.0.1 -u root -pshoproot jinwu_shop < seed.sql
           rm -f seed.sql
+          # Prove the credential actually works rather than assuming the hash
+          # round-tripped. The length is safe to print and is the one fact that
+          # identifies a whitespace or truncation problem; the value is masked.
+          echo "seeded password length: ${#PW}"
+          echo "employees seeded: $(mysql -h 127.0.0.1 -u root -pshoproot -N -B -e 'SELECT GROUP_CONCAT(email) FROM ps_employee WHERE active=1' jinwu_shop)"
+          STORED=$(mysql -h 127.0.0.1 -u root -pshoproot -N -B -e "SELECT passwd FROM ps_employee WHERE email='harry@superesolutions.com'" jinwu_shop)
+          if php -r 'exit(password_verify($argv[1], $argv[2]) ? 0 : 1);' "$PW" "$STORED"; then
+            echo "credential verified: the stored hash matches the password this run seeded"
+          else
+            echo "::error::the seeded password does NOT verify against the stored hash - do not hand out this session"
+            exit 1
+          fi
           echo "PS_ADMIN_PW=$PW" >> "$GITHUB_ENV"
 
       - name: Start PrestaShop
