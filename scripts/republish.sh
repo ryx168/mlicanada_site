@@ -88,13 +88,22 @@ python3 scripts/check-refs.py "$OUT" "$HOST" --known scripts/known-broken.txt   
   echo "::error::export failed its reference check - NOT deploying"; exit 1; }
 
 echo "== rebuild the D1 catalogue =="
-python3 scripts/build-d1.py "$DB" canon.tsv d1.sql
-npx --yes wrangler@4 d1 execute mlicanada-db --remote --file=d1.sql
+# These were unchecked, and this script runs without -e: build-d1.py crashed
+# on a cp1252 byte, d1.sql was never written, wrangler said "Unable to read
+# SQL text file" - and the run still reported SUCCESS, having deployed the
+# site against a stale catalogue. Gate both.
+python3 scripts/build-d1.py "$DB" canon.tsv d1.sql \
+  || { echo "::error::building the D1 catalogue failed"; exit 1; }
+[ -s d1.sql ] || { echo "::error::d1.sql is empty or missing"; exit 1; }
+echo "   d1.sql: $(wc -l < d1.sql) lines, $(du -h d1.sql | cut -f1)"
+npx --yes wrangler@4 d1 execute mlicanada-db --remote --file=d1.sql \
+  || { echo "::error::applying the D1 catalogue failed"; exit 1; }
 
 echo "== deploy =="
 cp -r functions "$OUT/../functions" 2>/dev/null || true
 cp scripts/_redirects "$OUT/_redirects"
-npx --yes wrangler@4 pages deploy "$OUT" --project-name "$PROJECT" --branch main
+npx --yes wrangler@4 pages deploy "$OUT" --project-name "$PROJECT" --branch main \
+  || { echo "::error::pages deploy failed"; exit 1; }
 
 echo "== prove the FUNCTIONS deployed, not just the static pages =="
 # Search and category pagination are served by Pages Functions reading D1, not
@@ -136,4 +145,7 @@ print('\n'.join(sorted(out)))
 PY
 python3 scripts/verify-live-refs.py "$HOST" --via "$PROJECT.pages.dev" \
   --paths pages-deployed.txt --known scripts/known-broken.txt \
-  --max-pages 700 --max-refs 1800
+  --max-pages 700 --max-refs 1800 \
+  || { echo "::error::the DEPLOYED site failed verification"; exit 1; }
+
+echo "== republish complete and verified =="

@@ -20,14 +20,23 @@ import sys
 DB = sys.argv[1]
 CANON = sys.argv[2]
 OUT = sys.argv[3]
-MYSQL = ['mysql', '-h', '127.0.0.1', '-u', 'root', '-pshoproot', '-N', '-B', DB, '-e']
+# --default-character-set=utf8mb4: the shop's text columns are latin1, so
+# without it mysql hands back cp1252 bytes and this script died with
+#   UnicodeDecodeError: 'utf-8' codec can't decode byte 0xae
+# on the first product name containing a (R). d1.sql was then never
+# written and the D1 rebuild was silently skipped.
+MYSQL = ['mysql', '-h', '127.0.0.1', '-u', 'root', '-pshoproot',
+         '--default-character-set=utf8mb4', '-N', '-B', DB, '-e']
 
 
 def q(sql):
     """Rows as lists of strings. --batch escapes tabs/newlines as \\t and \\n;
     never pass --raw, which turns them back into real control characters and
     corrupts the column split."""
-    out = subprocess.run(MYSQL + [sql], capture_output=True, text=True, encoding='utf-8')
+    # errors='replace' as a backstop: one undecodable byte must not take
+    # the whole catalogue rebuild down.
+    out = subprocess.run(MYSQL + [sql], capture_output=True, text=True,
+                         encoding='utf-8', errors='replace')
     if out.returncode != 0:
         sys.stderr.write(out.stderr[:400])
         raise SystemExit('mysql failed')
