@@ -138,8 +138,8 @@ function startingPage(alreadyRunning) {
     + '<h1>' + (alreadyRunning ? 'Starting&hellip;' : 'Starting the admin&hellip;') + '</h1>'
     + '<p>Loading the catalogue, theme and product images. This takes about'
     + ' three minutes.</p><div class="bar"><i></i></div>'
-    + '<p style="margin:16px 0 0"><small>The page opens the admin by itself when it is'
-    + ' ready.</small></p>'
+    + '<p style="margin:16px 0 0"><small>The admin opens by itself when it is ready.'
+    + ' Add <code>?logout</code> to this address to log out and close.</small></p>'
     + '<noscript><p><b>JavaScript is off.</b></p>'
     + '<form method="POST"><button type="submit">Start the admin</button></form></noscript>'
     + '<script>'
@@ -152,14 +152,30 @@ function startingPage(alreadyRunning) {
     + '</script>');
 }
 
-export async function launcherGet({ env }) {
+export async function launcherGet({ request, env }) {
   if (!env.GH_TOKEN) {
     return page('<h1>Not configured</h1><p>This launcher needs a <code>GH_TOKEN</code>'
       + ' secret on the Pages project - a fine-grained token with Actions read/write'
       + ' and Contents read on the site repo.</p>', 503);
   }
 
+  // ?manage, ?close or ?logout asks for the control panel. Without it, an open
+  // session redirects STRAIGHT into the admin - the owner asked for one hop,
+  // not a page with a button on it. The panel has to stay reachable somehow,
+  // or there would be no way to press Close.
+  let manage = false;
+  try {
+    const q = new URL(request.url).searchParams;
+    manage = q.has('manage') || q.has('close') || q.has('logout');
+  } catch (e) { /* no URL on a bare mock: treat as a plain visit */ }
+
   const live = await liveSession(env);
+  if (live && !manage) {
+    return new Response(null, {
+      status: 302,
+      headers: Object.assign({}, H, { location: live.admin_url }),
+    });
+  }
   if (live) {
     const closes = new Date(live.expires_at);
     const leftMin = Math.max(0, Math.round((closes - Date.now()) / 60000));
@@ -167,12 +183,14 @@ export async function launcherGet({ env }) {
       + '<p>Open for about ' + leftMin + ' more minutes, or until you close it.</p>'
       + '<a class="b" href="' + esc(live.admin_url) + '">Open the admin</a>'
       + '<form method="POST" id="cf"><input type="hidden" name="intent" value="close">'
-      + '<button class="sec" type="submit">Close the admin now</button></form>'
+      + '<button class="sec" type="submit">Log out and close the admin</button></form>'
       + '<p style="margin:14px 0 0"><small>Sign in as admin@mlicanada.com. Closing saves'
-      + ' your catalogue edits first. The address is temporary and changes every'
-      + ' session.</small></p>'
+      + ' your catalogue edits first - closing IS the logout, since the server and'
+      + ' its session cease to exist. The address is temporary and changes every'
+      + ' session. Visiting this path without <code>?manage</code> goes straight'
+      + ' to the admin.</small></p>'
       + '<script>document.getElementById("cf").addEventListener("submit",function(e){'
-      + 'if(!confirm("Close the admin? Your edits are saved first.")){e.preventDefault()}})</script>');
+      + 'if(!confirm("Log out and close the admin? Your edits are saved first.")){e.preventDefault()}})</script>');
   }
 
   // No session. Show the spinner and let its script start one - a GET must
@@ -203,7 +221,8 @@ export async function launcherPost({ request, env }) {
       return page('<h1>Could not close it</h1><p>GitHub answered ' + r.status
         + '. It will close on its own at the end of the session.</p>', 502);
     }
-    return page('<h1>Closing&hellip;</h1><p>Your catalogue edits are being saved.</p>'
+    return page('<h1>Logged out, closing&hellip;</h1>'
+      + '<p>The server is shutting down and your catalogue edits are being saved.</p>'
       + '<div class="bar"><i></i></div>'
       + '<script>setTimeout(function(){location.href=location.pathname},15000)</script>');
   }

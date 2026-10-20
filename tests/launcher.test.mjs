@@ -16,6 +16,12 @@ const BROWSER = {
   accept: 'text/html,application/xhtml+xml',
 };
 
+// A GET needs a url so the launcher can read ?manage.
+function getReq(query) {
+  return { url: 'https://mlicanada-holding.pages.dev/admin168we3cgm/' + (query || ''),
+           headers: { get: () => null } };
+}
+
 function req(headers, form) {
   // A real browser form POST carries this content-type; included so the
   // mock cannot pass where a browser would fail.
@@ -54,7 +60,7 @@ const LIVE = () => ({
 
 // 1. THE invariant.
 calls = []; stubFetch();
-let r = await launcherGet({ env: { GH_TOKEN: 't' } });
+let r = await launcherGet({ request: getReq(), env: { GH_TOKEN: 't' } });
 let body = await r.text();
 check('GET dispatched NOTHING', dispatches() === 0, calls.join(' | '));
 
@@ -89,19 +95,33 @@ check('POST while starting dispatches nothing', dispatches() === 0, calls.join('
 
 // 8. A stale session file (cancelled run) is ignored, and still no dispatch.
 calls = []; stubFetch({ session: { admin_url: 'https://old.trycloudflare.com/a/', expires_at: '2020-01-01T00:00:00Z' } });
-r = await launcherGet({ env: { GH_TOKEN: 't' } });
+r = await launcherGet({ request: getReq(), env: { GH_TOKEN: 't' } });
 body = await r.text();
 check('expired session file is ignored', body.includes('class="sp"'));
 check('expired session did not leak the dead URL', !body.includes('old.trycloudflare.com'));
 check('expired session did not dispatch on the GET', dispatches() === 0, calls.join(' | '));
 
-// 9. A live session offers Open and Close, and says how long is left.
-stubFetch({ session: LIVE(), runs: [{ status: 'in_progress', id: 77 }] });
-r = await launcherGet({ env: { GH_TOKEN: 't' } });
+// 9. An open session redirects STRAIGHT into the admin - one hop, no page
+//    with a button on it.
+calls = []; stubFetch({ session: LIVE(), runs: [{ status: 'in_progress', id: 77 }] });
+r = await launcherGet({ request: getReq(), env: { GH_TOKEN: 't' } });
+check('open session redirects to the admin', r.status === 302, 'status=' + r.status);
+check('redirect points at the session URL',
+      r.headers.get('location') === 'https://live.trycloudflare.com/admin650a7u3gr/',
+      r.headers.get('location'));
+check('the redirect still dispatched nothing', dispatches() === 0, calls.join(' | '));
+
+// 9b. ?manage keeps the panel reachable, or Close could never be pressed.
+r = await launcherGet({ request: getReq('?manage'), env: { GH_TOKEN: 't' } });
 body = await r.text();
-check('live session shows the admin link', body.includes('https://live.trycloudflare.com/admin650a7u3gr/'));
-check('live session offers Close', body.includes('Close the admin now') && body.includes('value="close"'));
-check('live session reports minutes left', /about 3[23][0-9] more minutes/.test(body), body.match(/about [^<]*/)?.[0]);
+check('?manage shows the panel, not a redirect', r.status === 200, 'status=' + r.status);
+check('panel shows the admin link', body.includes('https://live.trycloudflare.com/admin650a7u3gr/'));
+check('panel offers log-out-and-close', body.includes('Log out and close the admin') && body.includes('value="close"'));
+check('panel reports minutes left', /about 3[23][0-9] more minutes/.test(body), body.match(/about [^<]*/)?.[0]);
+for (const q of ['?close', '?logout']) {
+  r = await launcherGet({ request: getReq(q), env: { GH_TOKEN: 't' } });
+  check(q + ' also shows the panel', r.status === 200, 'status=' + r.status);
+}
 
 // 10. Close cancels the run.
 calls = []; stubFetch({ session: LIVE(), runs: [{ status: 'in_progress', id: 77 }] });
