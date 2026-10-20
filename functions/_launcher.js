@@ -1,5 +1,17 @@
 // On-demand PrestaShop admin launcher, on the site's own domain.
 //
+// Routed at /admin168we3cgm/ - the shop's real admin directory - so the owner
+// uses the URL they already know, the way bodyspiritcentre keeps /wp-admin.
+// Lives in _launcher.js because a leading underscore is not routed by Pages;
+// functions/admin168we3cgm/index.js and [[path]].js bind it to the path.
+//
+// NOTE on that path: it is the directory that held the unauthenticated
+// reset-password.php backdoor (which set employee #1 to a known password) and
+// a publicly downloadable themes.tar, both quarantined 2026-10-18. Attackers
+// already know it, so expect it to be probed. Nothing here dispatches on a
+// GET, so probes cost no runner minutes - but the Start button does sit on a
+// known URL, and Cloudflare Access scoped to this path is the real fix.
+//
 // Same shape as the bodyspiritcentre /wp-admin launcher, and it carries that
 // project's hard-won rule: A GET NEVER STARTS A SESSION. When those launchers
 // auto-started on GET, scanners from France, Russia and the US drove them
@@ -106,7 +118,7 @@ function page(body, status) {
 
 const WAIT_SCRIPT = '<script>setTimeout(function(){location.reload()},10000)</script>';
 
-export async function onRequestGet({ env }) {
+export async function launcherGet({ env }) {
   if (!env.GH_TOKEN) {
     return page('<h1>Not configured</h1><p>This launcher needs a <code>GH_TOKEN</code>'
       + ' secret on the Pages project - a fine-grained token with Actions read/write'
@@ -137,7 +149,7 @@ export async function onRequestGet({ env }) {
     + 'var b=document.getElementById("b");b.disabled=true;b.textContent="Starting..."})</script>');
 }
 
-export async function onRequestPost({ request, env }) {
+export async function launcherPost({ request, env }) {
   if (!env.GH_TOKEN) return page('<h1>Not configured</h1>', 503);
   if (!looksLikeAPerson(request)) {
     return page('<h1>Not started</h1><p>Start the admin from a browser.</p>', 403);

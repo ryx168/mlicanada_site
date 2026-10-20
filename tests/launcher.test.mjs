@@ -6,7 +6,7 @@
 // GET branch dispatch fails test 1, and removing the bot filter fails
 // tests 2-3.
 // Exercises the launcher's gates without a network or a Pages runtime.
-import { onRequestGet, onRequestPost } from '../functions/m-99dbcd78867fdadc.js';
+import { launcherGet as onRequestGet, launcherPost as onRequestPost } from '../functions/_launcher.js';
 
 let calls = [];
 const BROWSER = {
