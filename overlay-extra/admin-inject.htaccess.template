@@ -6,6 +6,9 @@
 # 2. The logo's alt text, which PrestaShop hardcodes to "PrestaShop". The image
 #    itself is replaced on disk by the workflow; this fixes the text that screen
 #    readers and a broken-image placeholder show.
+# 3. A cache-buster on the logo URL, because replacing the bytes behind an
+#    unchanged URL leaves every browser that has already loaded the page showing
+#    the old wordmark.
 #
 # Done with mod_substitute rather than by editing PrestaShop's templates: the
 # admin theme's Twig/TPL layout differs between 1.7 point releases and the
@@ -29,3 +32,9 @@ AddOutputFilterByType SUBSTITUTE text/html
 # One replacement only, at the end of the body.
 Substitute "s|</body>|<a href=\"@@LAUNCHER@@\" id=\"mli-end-session\" style=\"position:fixed;right:14px;bottom:14px;z-index:99999;background:#c0392b;color:#fff;font:600 13px/1 -apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:10px 14px;border-radius:8px;text-decoration:none;box-shadow:0 2px 8px rgba(0,0,0,.3)\">Restart / end session</a></body>|ni"
 Substitute "s|alt=\"PrestaShop\"|alt=\"MLI Canada\"|ni"
+# Cache-bust the logo. The file on disk is replaced but the URL is not, so a
+# browser that has already seen /img/prestashop@2x.png keeps showing the old
+# PrestaShop wordmark until a hard refresh - which is exactly what happened.
+# Appending a query makes it a URL the browser has never fetched.
+Substitute "s|/img/prestashop@2x.png|/img/prestashop@2x.png?mli=1|ni"
+Substitute "s|/img/prestashop.png|/img/prestashop.png?mli=1|ni"
