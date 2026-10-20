@@ -361,6 +361,34 @@ jobs:
             echo "Customers and orders are deliberately absent: this copy holds the catalogue only."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Publish the session address for the launcher Function on the site
+      # (functions/m-*.js). The tunnel hostname is random and changes every
+      # run, so the launcher cannot know it any other way. A side branch keeps
+      # it out of main history. No heredocs here: a heredoc terminator cannot
+      # be indented inside a YAML block scalar.
+      - name: Publish the session address
+        env:
+          GH_TOKEN: ${{ github.token }}
+          URL: ${{ steps.tunnel.outputs.url }}
+        run: |
+          set -uo pipefail
+          ADMIN_DIR=$(docker exec ps sh -c 'ls -d /var/www/html/admin* 2>/dev/null | head -1' | xargs -r basename || echo admin)
+          MINS=${{ inputs.minutes }}
+          if [ "$MINS" -gt 300 ]; then MINS=300; fi
+          EXP=$(date -u -d "+$MINS minutes" +%Y-%m-%dT%H:%M:%SZ)
+          jq -n --arg u "$URL/$ADMIN_DIR/" --arg e "$EXP" \n             '{admin_url:$u, expires_at:$e}' > session.json
+          cat session.json
+          R=${{ github.repository }}
+          MAIN_SHA=$(gh api "repos/$R/git/ref/heads/main" --jq .object.sha)
+          gh api "repos/$R/git/refs" -f ref=refs/heads/session -f sha="$MAIN_SHA" >/dev/null 2>&1 || true
+          SHA=$(gh api "repos/$R/contents/session.json?ref=session" --jq .sha 2>/dev/null || true)
+          if [ -n "${SHA:-}" ]; then
+            gh api -X PUT "repos/$R/contents/session.json" -f message="session open" \n              -f branch=session -f content="$(base64 -w0 session.json)" -f sha="$SHA" >/dev/null
+          else
+            gh api -X PUT "repos/$R/contents/session.json" -f message="session open" \n              -f branch=session -f content="$(base64 -w0 session.json)" >/dev/null
+          fi
+          echo "published to the session branch"
+
       - name: Hold the admin open
         run: |
           MINS=${{ inputs.minutes }}
@@ -373,6 +401,22 @@ jobs:
               break
             fi
           done
+
+      # Always clear it. A cancelled or crashed run would otherwise leave the
+      # launcher advertising a tunnel that is gone. The Function also ignores
+      # an expired file, so this is the second of two defences.
+      - name: Retract the session address
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          R=${{ github.repository }}
+          SHA=$(gh api "repos/$R/contents/session.json?ref=session" --jq .sha 2>/dev/null || true)
+          [ -n "${SHA:-}" ] || { echo "nothing published"; exit 0; }
+          jq -n '{admin_url:"", expires_at:"1970-01-01T00:00:00Z"}' > session.json
+          gh api -X PUT "repos/$R/contents/session.json" -f message="session closed" \n            -f branch=session -f content="$(base64 -w0 session.json)" -f sha="$SHA" >/dev/null
+          echo "session address retracted"
 
       - name: Save the edited catalogue back to the repo
         if: always()
