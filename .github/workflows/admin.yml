@@ -19,6 +19,14 @@ on:
 permissions:
   contents: write
 
+# Two sessions must never run at once: both dump the catalogue back to
+# db/mlicanada_shop.sql.gz and both write the session branch, so a race
+# loses one session's edits silently. Queue instead of cancelling - a
+# cancelled session would drop whatever the owner had just typed.
+concurrency:
+  group: mlicanada-admin
+  cancel-in-progress: false
+
 jobs:
   admin:
     runs-on: ubuntu-latest
