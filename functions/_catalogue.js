@@ -37,19 +37,26 @@ export async function categoryPage(env, iso, categoryId, page) {
     `SELECT COUNT(*) AS n FROM category_product cp
        JOIN products p ON p.id_product = cp.id_product AND p.active = 1
       WHERE cp.id_category = ?`).bind(categoryId).first('n');
-  // Ordered by NAME, not cp.position, and that matters: page 1 of a category
-  // is a CRAWLED PrestaShop page, and this shop sorts its listings
-  // alphabetically - only ?page=2 and beyond are served from here. Ordering by
-  // position made the two halves of one category disagree. Category 194: the
-  // crawled page 1 ended with 5" Tart Shell, while page 2 from this query
-  // (positions 12-13) repeated that same product and dropped Oval Foil Pie
-  // Shell from the site entirely. id_product is a unique final tiebreaker, so
-  // the LIMIT/OFFSET window is deterministic.
+  // Ordered by REFERENCE, because that is what this shop is configured to do:
+  // PS_PRODUCTS_ORDER_BY = 7, PS_PRODUCTS_ORDER_WAY = 0. Confirmed by reading
+  // the origin's page 1 in document order (169 172 174 177 180 182 183 185
+  // 190 197 198 237) and matching it against ORDER BY reference, name and
+  // position in the origin's own database - only reference matches. It looks
+  // alphabetical by name in this catalogue, but that is a coincidence of the
+  // data, and ordering by name gets a different page 2.
+  //
+  // This matters because page 1 of a category is a CRAWLED PrestaShop file and
+  // only ?page=2 onwards is served from here, so a different ordering on
+  // either side of the boundary repeats one product and drops another while
+  // every URL still returns 200. ORDER BY cp.position did exactly that:
+  // category 194's page 2 repeated 5" Tart Shell and Oval Foil Pie Shell
+  // appeared on no page at all. id_product is a unique final tiebreaker so the
+  // LIMIT/OFFSET window is deterministic.
   const rows = await env.DB.prepare(
     `${SELECT} ${FROM}
        JOIN category_product cp ON cp.id_product = p.id_product AND cp.id_category = ?
       WHERE p.active = 1
-      ORDER BY l.name, p.id_product
+      ORDER BY p.reference, p.id_product
       LIMIT ? OFFSET ?`).bind(iso, iso, categoryId, PER_PAGE, off).all();
   return { total: total || 0, rows: rows.results || [] };
 }

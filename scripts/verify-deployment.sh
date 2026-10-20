@@ -1,7 +1,7 @@
 #!/bin/bash
 # Verify a freshly deployed mlicanada-holding deployment.
 #
-# Usage: verify-deployment.sh <project> <multi-page-category-path>
+# Usage: verify-deployment.sh <project> <multi-page-category-path> <shop-base-url>
 #
 # Two things here that a page-and-asset check cannot see:
 #
@@ -18,6 +18,7 @@ set -uo pipefail
 
 PROJECT="$1"
 CAT="${2:-}"
+SHOP="${3:-}"
 BASE="https://$PROJECT.pages.dev"
 fail=0
 
@@ -36,7 +37,7 @@ settle() {
 
 plinks() {
   curl -s --max-time 30 "$1" \
-    | grep -oiE 'href="/[a-z]{2}/[a-z0-9_-]+/[0-9]+-[^"]+[.]html"' \
+    | grep -oiE 'href="(https?://[^"/]+)?/[a-z]{2}/[a-z0-9_-]+/[0-9]+-[^"]+[.]html"' \
     | sed 's/^href="//I; s/"$//' | sort -u
 }
 
@@ -82,32 +83,43 @@ if [ "$both" -ne 0 ]; then
   fail=1
 fi
 
-# The strongest invariant available: every product the category claims must
-# appear exactly once across its pages. The ?page=1 comparison above is weak
-# on its own - Pages serves the static file for that path whatever the query
-# string, so it can compare the crawled page with itself - but a product that
-# is repeated at the seam necessarily means another is missing, and this
-# catches that directly against the shop's own stated total.
-total=$(curl -s --max-time 30 "$BASE$CAT" | grep -oiE 'There (are|is) [0-9]+ product'         | head -1 | grep -oE '[0-9]+' || true)
-if [ -n "${total:-}" ]; then
-  : > allpages.txt
-  cat pg1.txt >> allpages.txt
-  for n in 2 3 4 5 6 7 8 9 10; do
-    plinks "$BASE$CAT?page=$n" > pgn.txt
+# Completeness, against the SHOP ITSELF rather than the stated total.
+# The total is the wrong yardstick: a product with no link_rewrite is
+# rendered without a link, so it is unreachable on the origin too -
+# /en/2-products shows 10 linked products out of 12 tiles. The real
+# requirement is that the deployed site exposes exactly the products the
+# shop exposes, so walk both and compare the sets.
+#
+# The page loop runs to 40, not 10: a 195-product category needs 17
+# pages, and a cap of 10 made this check report 82 products "missing"
+# that were simply never requested.
+walk() {   # $1 = base URL for the category, writes a sorted path list
+  local base="$1" out="$2" n
+  plinks "$base" > "$out"
+  for n in $(seq 2 40); do
+    plinks "$base?page=$n" > pgn.txt
     [ -s pgn.txt ] || break
-    cat pgn.txt >> allpages.txt
+    cat pgn.txt >> "$out"
   done
-  sort -u -o allpages.txt allpages.txt
-  seen=$(wc -l < allpages.txt)
-  echo "   $CAT claims $total products; $seen distinct products are reachable across its pages"
-  if [ "$seen" -ne "$total" ]; then
-    echo "::error::$CAT lists $total products but only $seen are reachable - $(( total - seen )) are on no page at all"
+  # Absolute shop URLs become root-relative so the two sides compare.
+  sed -i -E "s|^https?://[^/]+||" "$out"
+  sort -u -o "$out" "$out"
+}
+
+if [ -n "${SHOP:-}" ]; then
+  walk "$SHOP$CAT" shop-all.txt
+  walk "$BASE$CAT"  live-all.txt
+  echo "   $CAT: the shop exposes $(wc -l < shop-all.txt) products, the deployment $(wc -l < live-all.txt)"
+  if ! diff -q shop-all.txt live-all.txt >/dev/null; then
+    echo "::error::the deployed category does not expose the same products as the shop"
+    echo "      on the shop but NOT deployed:"; comm -23 shop-all.txt live-all.txt | head -8
+    echo "      deployed but NOT on the shop:"; comm -13 shop-all.txt live-all.txt | head -8
     fail=1
   fi
 else
-  echo "::error::could not read the product total off $CAT, so completeness is unchecked"
+  echo "::error::no shop base URL given, so category completeness is unchecked"
   fail=1
 fi
 
 [ "$fail" = "0" ] || exit 1
-echo "   deployment verified: Functions live, the page seam is consistent, and every product is reachable"
+echo "   deployment verified: Functions live, no product on two pages, and the deployed categories expose exactly what the shop does"

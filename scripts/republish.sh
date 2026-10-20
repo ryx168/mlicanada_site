@@ -120,7 +120,7 @@ multi=$($MYSQL "$DB" -N -B -e "
   ORDER BY x.n DESC LIMIT 1" 2>/dev/null | head -1)
 echo "   seam check will use: ${multi:-<NONE FOUND>}"
 [ -n "${multi:-}" ] || { echo "::error::found no category with more than 12 products, so the page seam cannot be checked"; exit 1; }
-bash scripts/verify-deployment.sh "$PROJECT" "$multi" \
+bash scripts/verify-deployment.sh "$PROJECT" "$multi" "http://$HOST" \
   || { echo "::error::the deployment failed verification"; exit 1; }
 
 echo "== verify what we just published =="
