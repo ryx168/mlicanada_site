@@ -1,0 +1,72 @@
+name: Pages custom domains
+
+# Registers a custom domain on the Pages project.
+#
+# This has to happen BEFORE DNS points at Pages. A CNAME aimed at a project
+# that does not claim the hostname gets a Cloudflare error page, so flipping
+# DNS first would take the site down until the domain was added.
+#
+# It lives in a workflow because the only token with Pages:Edit for this
+# account is the CLOUDFLARE_API_TOKEN repo secret - the local DNS token
+# returns "Authentication error" against the Pages API.
+
+on:
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: 'Hostname to add (e.g. mlicanada.com or www.mlicanada.com)'
+        required: true
+      project:
+        description: 'Pages project'
+        required: true
+        default: 'mlicanada-holding'
+
+permissions: {}
+
+jobs:
+  add:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add the custom domain
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DOMAIN: ${{ inputs.domain }}
+          PROJECT: ${{ inputs.project }}
+        run: |
+          set -uo pipefail
+          if [ -z "${CF_TOKEN:-}" ] || [ -z "${CF_ACCOUNT:-}" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are required"
+            exit 1
+          fi
+          API="https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/pages/projects/$PROJECT/domains"
+
+          echo "== domains already on $PROJECT =="
+          curl -s -H "Authorization: Bearer $CF_TOKEN" "$API" \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);[print("  ",x.get("name"),x.get("status")) for x in (d.get("result") or [])] or print("   (none)")'
+
+          echo
+          echo "== adding $DOMAIN =="
+          OUT=$(curl -s -X POST -H "Authorization: Bearer $CF_TOKEN" \
+                 -H 'content-type: application/json' \
+                 --data "{\"name\":\"$DOMAIN\"}" "$API")
+          echo "$OUT" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+if d.get("success"):
+    r = d.get("result") or {}
+    print("   added:", r.get("name"), "status:", r.get("status"))
+else:
+    msgs = [e.get("message","") for e in d.get("errors", [])]
+    # Already-present is not a failure: this workflow is safe to re-run.
+    if any("already" in m.lower() or "exist" in m.lower() for m in msgs):
+        print("   already present:", msgs)
+    else:
+        print("::error::could not add the domain:", msgs)
+        raise SystemExit(1)
+'
+
+          echo
+          echo "== domains now =="
+          curl -s -H "Authorization: Bearer $CF_TOKEN" "$API" \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);[print("  ",x.get("name"),x.get("status")) for x in (d.get("result") or [])]'
