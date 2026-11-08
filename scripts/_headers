@@ -1,0 +1,49 @@
+# Edge-cache the static assets. Added 2026-11-08.
+#
+# WHY. Measured before this file existed: the same stylesheet
+# (/themes/Amora/assets/cache/theme-8f5caa33.css) fetched three times, seconds
+# apart, answered REVALIDATED REVALIDATED REVALIDATED. Cloudflare went back to
+# the origin on every single request, so a Function ran for every asset on every
+# page view. The responses carried:
+#
+#     Cache-Control: public, max-age=14400, must-revalidate
+#     ETag: W/"b727df74cb275541dba8c5b196514762"
+#
+# `must-revalidate` is what forces that round trip - it tells the cache it may
+# not serve the stored copy without checking first, so the max-age=14400 buys
+# nothing at all. The weak ETag then makes the check cheap but still a check.
+#
+# WHAT. Only static assets get a rule here. They are content-addressed or
+# immutable in practice: PrestaShop writes theme assets under
+# /themes/<name>/assets/cache/ with a content hash in the filename, module and
+# product images are republished under new paths when they change, so a day at
+# the edge cannot serve a stale file - a change produces a different URL.
+#
+# HTML deliberately gets NO rule and keeps the Pages default. Prices, stock and
+# the category pagination come from the D1 catalogue, and those must stay
+# fresh; caching them for a day is how a sold-out product keeps selling.
+#
+# Paths were taken from the live homepage's own markup, not guessed:
+#   /themes/Amora/assets/cache   (css, js)
+#   /modules/*/views/img         (slider, blog, logo-slider images)
+#   /img                         (shop logo and furniture)
+#   /<id>-home_default           (product images; PrestaShop image-type dirs)
+
+/themes/*
+  Cache-Control: public, max-age=86400
+
+/modules/*
+  Cache-Control: public, max-age=86400
+
+/img/*
+  Cache-Control: public, max-age=86400
+
+# The PrestaShop product-image directories (/80-home_default/..., and the
+# large_/medium_/cart_/thickbox_default variants) are deliberately NOT listed
+# here. They would need an asterisk in the MIDDLE of a path segment, and
+# Cloudflare's _headers specification documents a splat only as "greedily match
+# all characters" without saying whether a mid-segment one is valid - nor what
+# happens to a rule it cannot parse. Those images are covered by the zone Cache
+# Rule instead, which matches on file extension and is specified for it.
+#
+# Limit, per the same spec: "You may define up to 100 header rules." This uses 3.

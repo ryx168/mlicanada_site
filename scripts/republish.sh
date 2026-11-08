@@ -102,6 +102,11 @@ npx --yes wrangler@4 d1 execute mlicanada-db --remote --file=d1.sql \
 echo "== deploy =="
 cp -r functions "$OUT/../functions" 2>/dev/null || true
 cp scripts/_redirects "$OUT/_redirects"
+# Edge-cache headers for the static assets. Without this every asset request
+# revalidates against the origin (measured: REVALIDATED on three consecutive
+# fetches of the same css), so a Function runs for every asset on every page
+# view. See scripts/_headers for which paths and why HTML is left alone.
+cp scripts/_headers "$OUT/_headers"
 npx --yes wrangler@4 pages deploy "$OUT" --project-name "$PROJECT" --branch main \
   || { echo "::error::pages deploy failed"; exit 1; }
 
