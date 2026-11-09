@@ -88,10 +88,22 @@ table('products', 'id_product INTEGER PRIMARY KEY, active INTEGER, reference TEX
                   '(SELECT i.id_image FROM ps_image i WHERE i.id_product=p.id_product AND i.cover=1 LIMIT 1) '
                   'FROM ps_product p')])
 
+# INDEXES ARE NOT OPTIONAL HERE, and this table had none until 2026-11-09.
+# Every category listing joins products_lang, and with no key on it SQLite
+# scanned all 3,538 rows per joined product. Measured cost of one category page
+# before: 8,793 rows read for a category holding 14 products - effectively the
+# whole database on every request. One crawler walking ?page=N on 2026-11-09
+# turned that into 2.9 BILLION rows read in a day from a 946 KB database,
+# which the Bill tab projected as $81 of D1 overage. After indexing: 99 rows.
+#
+# These live in extra_ddl rather than being applied by hand, because table()
+# DROPs and recreates, so a republish would silently throw away any index
+# added out of band - and the cost would come straight back.
 table('products_lang', 'id_product INTEGER, iso TEXT, name TEXT, description_short TEXT, link_rewrite TEXT',
       [[r[0], lit(langs.get(r[1], '')), lit(r[2]), lit(strip_html(r[3])), lit(r[4])]
        for r in q('SELECT id_product, id_lang, name, description_short, link_rewrite FROM ps_product_lang')
-       if langs.get(r[1])])
+       if langs.get(r[1])],
+      'CREATE INDEX idx_plang_prod ON products_lang(id_product, iso);')
 
 table('categories', 'id_category INTEGER PRIMARY KEY, id_parent INTEGER, active INTEGER',
       [[r[0], r[1], r[2]] for r in q('SELECT id_category, id_parent, active FROM ps_category')])
@@ -99,10 +111,24 @@ table('categories', 'id_category INTEGER PRIMARY KEY, id_parent INTEGER, active 
 table('categories_lang', 'id_category INTEGER, iso TEXT, name TEXT, link_rewrite TEXT',
       [[r[0], lit(langs.get(r[1], '')), lit(r[2]), lit(r[3])]
        for r in q('SELECT id_category, id_lang, name, link_rewrite FROM ps_category_lang')
-       if langs.get(r[1])])
+       if langs.get(r[1])],
+      'CREATE INDEX idx_catlang_cat ON categories_lang(id_category, iso);')
 
+# category_counts exists so the per-page total is ONE indexed row instead of a
+# 2,941-row scan. The number only changes when this script runs, so computing
+# it per request was pure waste: 231,958 COUNT(*) queries on 2026-11-09 read
+# 742 M rows between them to return a single integer each time.
+#
+# Built from category_product and products, both of which are populated above.
 table('category_product', 'id_category INTEGER, id_product INTEGER, position INTEGER',
-      [[r[0], r[1], r[2]] for r in q('SELECT id_category, id_product, position FROM ps_category_product')])
+      [[r[0], r[1], r[2]] for r in q('SELECT id_category, id_product, position FROM ps_category_product')],
+      'CREATE INDEX idx_catprod_cat ON category_product(id_category, id_product);\n'
+      'DROP TABLE IF EXISTS category_counts;\n'
+      'CREATE TABLE category_counts (id_category INTEGER PRIMARY KEY, n INTEGER NOT NULL);\n'
+      'INSERT INTO category_counts (id_category, n)\n'
+      '  SELECT cp.id_category, COUNT(*) FROM category_product cp\n'
+      '  JOIN products p ON p.id_product = cp.id_product AND p.active = 1\n'
+      '  GROUP BY cp.id_category;')
 
 # canonical URLs, taken from the shop's own 302s during this run
 urls = []

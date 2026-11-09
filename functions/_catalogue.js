@@ -33,10 +33,28 @@ const FROM = `
 
 export async function categoryPage(env, iso, categoryId, page) {
   const off = (page - 1) * PER_PAGE;
-  const total = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM category_product cp
-       JOIN products p ON p.id_product = cp.id_product AND p.active = 1
-      WHERE cp.id_category = ?`).bind(categoryId).first('n');
+  // The total is precomputed into category_counts by scripts/build-d1.py: it
+  // can only change when that script runs, so counting it per request was
+  // waste - 231,958 COUNT(*) queries on 2026-11-09 read 742 M rows to return
+  // one integer each. One indexed row now (measured 29 rows, was 2,941).
+  //
+  // The live COUNT stays as a fallback on purpose, so this file is safe to
+  // deploy before the table exists, and a category missing from the table
+  // (none today, but a future build could skip an empty one) still renders
+  // correctly rather than reporting zero products.
+  let total = null;
+  try {
+    total = await env.DB.prepare(
+      'SELECT n FROM category_counts WHERE id_category = ?').bind(categoryId).first('n');
+  } catch (e) {
+    total = null;                      // table absent on an older deployment
+  }
+  if (total == null) {
+    total = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM category_product cp
+         JOIN products p ON p.id_product = cp.id_product AND p.active = 1
+        WHERE cp.id_category = ?`).bind(categoryId).first('n');
+  }
   // Ordered by REFERENCE, because that is what this shop is configured to do:
   // PS_PRODUCTS_ORDER_BY = 7, PS_PRODUCTS_ORDER_WAY = 0. Confirmed by reading
   // the origin's page 1 in document order (169 172 174 177 180 182 183 185
