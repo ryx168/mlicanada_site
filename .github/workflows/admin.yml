@@ -123,6 +123,7 @@ jobs:
         env:
           PSHOST: ${{ steps.tunnel.outputs.host }}
           ADMIN_PW: ${{ secrets.ADMIN_PASSWORD }}
+          MLI_STAFF: ${{ secrets.MLI_STAFF }}
         run: |
           set -euo pipefail
           # Trim surrounding whitespace. A secret pasted into the web UI very
@@ -154,28 +155,37 @@ jobs:
             echo "UPDATE ps_configuration SET value='$PSHOST' WHERE name IN ('PS_SHOP_DOMAIN','PS_SHOP_DOMAIN_SSL');"
             echo "UPDATE ps_configuration SET value='1' WHERE name IN ('PS_SSL_ENABLED','PS_SSL_ENABLED_EVERYWHERE','PS_SHOP_ENABLE');"
             echo "UPDATE ps_configuration SET value='0' WHERE name IN ('PS_SHOP_ENABLE_MAINTENANCE','PS_MAINTENANCE');"
-            echo "DELETE FROM ps_employee;"
-            # 1.7.7 keeps the shop association in ps_employee_shop; ps_employee
-            # itself has no id_shop column, and naming one makes the seed fail
-            # and leaves no way to log in.
-            # TWO logins, same password, both SuperAdmin. The owner's own
-            # address is seeded because that is what he actually types - the
-            # first real session failed with "The employee does not exist"
-            # against harry@superesolutions.com. admin@mlicanada.com is kept so
-            # anything that already refers to it still works. Two rows with the
-            # same rights and password are no wider an attack surface than one.
-            echo "INSERT INTO ps_employee (id_profile,id_lang,lastname,firstname,email,passwd,active,optin,default_tab,bo_theme,bo_menu,stats_date_from,stats_date_to) VALUES (1,1,'Ji','Harry','harry@superesolutions.com','$HASH',1,0,1,'default',1,'2026-01-01','2026-12-31');"
-            echo "INSERT INTO ps_employee (id_profile,id_lang,lastname,firstname,email,passwd,active,optin,default_tab,bo_theme,bo_menu,stats_date_from,stats_date_to) VALUES (1,1,'Admin','MLI','admin@mlicanada.com','$HASH',1,0,1,'default',1,'2026-01-01','2026-12-31');"
-            echo "DELETE FROM ps_employee_shop;"
-            echo "INSERT INTO ps_employee_shop (id_employee,id_shop) SELECT id_employee,1 FROM ps_employee;"
           } > seed.sql
+          # The REAL staff list, restored from the January 2026 backup and held
+          # in the MLI_STAFF secret - names, emails, roles and the original
+          # bcrypt hashes, so everyone keeps the password they already know.
+          # It cannot live in the repo: this repo is PUBLIC (private Actions are
+          # billing-blocked on this account), which is also why the catalogue
+          # dump excludes ps_employee data and why the admin had only two
+          # accounts before. The customer was right to ask.
+          if [ -n "${MLI_STAFF:-}" ]; then
+            python3 scripts/mkseed.py "$HASH" >> seed.sql
+            SEED_SOURCE=backup
+          else
+            echo "::warning::MLI_STAFF is not set - falling back to two generated accounts. The real staff list will NOT be present."
+            {
+              echo "DELETE FROM ps_employee;"
+              echo "INSERT INTO ps_employee (id_profile,id_lang,lastname,firstname,email,passwd,active,optin,default_tab,bo_theme,bo_menu,stats_date_from,stats_date_to) VALUES (1,1,'Ji','Harry','harry@superesolutions.com','$HASH',1,0,1,'default',1,'2026-01-01','2026-12-31');"
+              echo "INSERT INTO ps_employee (id_profile,id_lang,lastname,firstname,email,passwd,active,optin,default_tab,bo_theme,bo_menu,stats_date_from,stats_date_to) VALUES (1,1,'Admin','MLI','admin@mlicanada.com','$HASH',1,0,1,'default',1,'2026-01-01','2026-12-31');"
+              echo "DELETE FROM ps_employee_shop;"
+              echo "INSERT INTO ps_employee_shop (id_employee,id_shop) SELECT id_employee,1 FROM ps_employee;"
+            } >> seed.sql
+            SEED_SOURCE=fallback
+          fi
           mysql -h 127.0.0.1 -u root -pshoproot jinwu_shop < seed.sql
           rm -f seed.sql
           # Prove the credential actually works rather than assuming the hash
           # round-tripped. The length is safe to print and is the one fact that
           # identifies a whitespace or truncation problem; the value is masked.
           echo "seeded password length: ${#PW}"
-          echo "employees seeded: $(mysql -h 127.0.0.1 -u root -pshoproot -N -B -e 'SELECT GROUP_CONCAT(email) FROM ps_employee WHERE active=1' jinwu_shop)"
+          echo "staff source: ${SEED_SOURCE:-?}"
+          echo "employees seeded: $(mysql -h 127.0.0.1 -u root -pshoproot -N -B -e 'SELECT COUNT(*) FROM ps_employee' jinwu_shop) total, $(mysql -h 127.0.0.1 -u root -pshoproot -N -B -e 'SELECT COUNT(*) FROM ps_employee WHERE active=1' jinwu_shop) active"
+          mysql -h 127.0.0.1 -u root -pshoproot -N -B -e "SELECT CONCAT('    ',email,'  profile=',id_profile,'  active=',active) FROM ps_employee ORDER BY id_employee" jinwu_shop
           STORED=$(mysql -h 127.0.0.1 -u root -pshoproot -N -B -e "SELECT passwd FROM ps_employee WHERE email='harry@superesolutions.com'" jinwu_shop)
           if php -r 'exit(password_verify($argv[1], $argv[2]) ? 0 : 1);' "$PW" "$STORED"; then
             echo "credential verified: the stored hash matches the password this run seeded"
