@@ -40,11 +40,21 @@ export async function onRequestGet(context) {
 
   try {
     // Categories: page 1 of each is a real exported file.
+    // id_parent = 0 is PrestaShop's internal root category. It is marked
+    // active and has a link_rewrite ("root" / "racine"), so it looks like a
+    // real category in the data - but no page is exported for it and
+    // /en/1-root answers 404. Measured: it was the ONLY bad entry in the first
+    // 642-URL sitemap, and exactly one row has id_parent = 0, so this excludes
+    // it without touching anything else.
+    //
+    // Categories with no active products are deliberately KEPT: their pages
+    // exist and return 200, and this site's whole point is more indexed pages.
     const cats = await env.DB.prepare(
       `SELECT cl.iso, cl.id_category, cl.link_rewrite
          FROM categories_lang cl
          JOIN categories c ON c.id_category = cl.id_category AND c.active = 1
         WHERE cl.link_rewrite IS NOT NULL AND cl.link_rewrite <> ''
+          AND c.id_parent <> 0
         ORDER BY cl.iso, cl.id_category`).all();
     for (const r of cats.results || []) {
       add(`${origin}/${r.iso}/${r.id_category}-${r.link_rewrite}`);
